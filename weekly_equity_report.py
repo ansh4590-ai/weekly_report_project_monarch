@@ -128,31 +128,56 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
     def _resolve_close(disp_name, df):
         """
         Pick the most accurate current close in priority order:
-        1. Exact date match in Yahoo Finance data
-        2. NSE live snapshot (if YF is missing the date)
-        3. Latest YF close (if YF data is not stale vs the previous Friday)
+        1. Exact date match in Yahoo Finance data (non-NaN Close)
+        2. NSE live snapshot (if YF is missing the date OR Close is NaN)
+        3. Latest YF close (if YF data is recent enough — after prev_friday)
         4. None (if YF data is fully stale or all sources are empty)
+
+        Known YF quirk: some indices (FINNIFTY, NIFTYNEXT50) return a row
+        for curr_friday with Open/High/Low present but Close = NaN.
+        get_close_on_date() then falls back to the last non-NaN close
+        which is prev_friday — giving 0% weekly change.  We detect this
+        case and explicitly use the NSE live snapshot instead.
         """
         nse_live = nse_snap.get(disp_name, {}).get("close")
         yf_has_exact = False
+        yf_curr_nan = False   # True when YF has a row for curr_friday but Close is NaN
         is_stale_week = False
 
         if df is not None and not df.empty:
             ts = pd.Timestamp(curr_friday_actual)
             valid_df = df.dropna(subset=["Close"])
             yf_has_exact = ts in valid_df.index
-            is_stale_week = valid_df.empty or valid_df.index[-1] <= pd.Timestamp(prev_friday_actual)
+
+            # Detect the YF NaN-close quirk: row exists but Close is NaN
+            if not yf_has_exact and ts in df.index:
+                yf_curr_nan = True
+
+            # Stale = last valid close is strictly before prev_friday
+            # (using < not <= so that data landing exactly on prev_friday
+            #  does NOT incorrectly mark the whole fetch as stale)
+            is_stale_week = (
+                valid_df.empty
+                or valid_df.index[-1] < pd.Timestamp(prev_friday_actual)
+            )
 
         yf_curr = get_close_on_date(df, curr_friday_actual)
         yf_prev = get_close_on_date(df, prev_friday_actual)
 
         if yf_has_exact:
+            # YF has a proper (non-NaN) close for curr_friday — use it
             return yf_prev, yf_curr, "YF"
+        elif yf_curr_nan or is_stale_week:
+            # YF Close is NaN or data is too old — prefer NSE live
+            if nse_live is not None:
+                return yf_prev, nse_live, "NSE_Fallback"
+            else:
+                return yf_prev, None, "YF_Stale_Week"
         elif nse_live is not None:
+            # YF date is missing entirely — fall back to NSE live
             return yf_prev, nse_live, "NSE_Fallback"
-        elif is_stale_week:
-            return yf_prev, None, "YF_Stale_Week"
         else:
+            # Best-effort: use whatever YF returned
             return yf_prev, yf_curr, "YF_Stale"
 
     # Build indices data
