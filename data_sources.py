@@ -217,6 +217,51 @@ def get_close_on_date(df: pd.DataFrame, target_date: date) -> Optional[float]:
     return val
 
 
+def get_close_from_bhavcopy(target_friday: date, disp_name: str) -> Optional[float]:
+    """
+    Read the spot index close for `disp_name` from the locally cached
+    derivatives Bhavcopy CSV for `target_friday`.
+
+    This is the most reliable fallback for cloud deployments (Streamlit Cloud)
+    where NSE API calls are blocked by NSE's IP geo-restrictions. The bhavcopy
+    files are committed to git and always available alongside the codebase.
+
+    Args:
+        target_friday: The Friday date whose close we need.
+        disp_name:     Our display name, e.g. "FINNIFTY", "NIFTY 50".
+
+    Returns:
+        float close, or None if bhavcopy not found / symbol not in file.
+    """
+    from config import DATA_DIR, BHAVCOPY_INDEX_MAP
+    bhav_sym = BHAVCOPY_INDEX_MAP.get(disp_name)
+    if not bhav_sym:
+        return None  # index not tracked in derivatives bhavcopy
+
+    # Walk back up to 5 weekdays looking for the nearest available bhavcopy
+    day = target_friday
+    for _ in range(5):
+        if day.weekday() >= 5:          # skip weekends
+            day -= timedelta(days=1)
+            continue
+        bhav_path = os.path.join(
+            DATA_DIR, str(day.year), day.strftime("%Y%m%d"), "bhavcopy.csv"
+        )
+        if os.path.exists(bhav_path):
+            try:
+                df_b = pd.read_csv(bhav_path, low_memory=False)
+                sub = df_b[df_b["TckrSymb"] == bhav_sym]
+                if not sub.empty:
+                    val = float(sub["UndrlygPric"].iloc[0])
+                    print(f"  [BHAVCOPY] {disp_name}: {val} (from {day})")
+                    return val
+            except Exception as exc:
+                print(f"  [WARN] Bhavcopy read error for {disp_name} on {day}: {exc}")
+        day -= timedelta(days=1)
+
+    return None
+
+
 def get_ohlc_week(df: pd.DataFrame,
                   after_date: date,
                   on_or_before_date: date) -> list:

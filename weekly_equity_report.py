@@ -42,7 +42,8 @@ from math_utils import (
     determine_bias, calculate_support_resistance
 )
 from data_sources import (
-    fetch_with_fallback, get_close_on_date, create_nse_session,
+    fetch_with_fallback, get_close_on_date, get_close_from_bhavcopy,
+    create_nse_session,
     fetch_nse_snapshot, fetch_fii_dii, fetch_constituents, fetch_global_markets,
     get_weekly_fii_dii, get_fii_dii_for_date,
     parse_bhavcopy_derivatives, fetch_option_chain_live
@@ -169,14 +170,22 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
             return yf_prev, yf_curr, "YF"
         elif yf_curr_nan or is_stale_week or (df is None or df.empty):
             # YF Close is NaN, data is too old, or YF returned no data at all.
-            # Fetch the true historical close from nselib so we don't accidentally
-            # use Monday's live snapshot data for a Friday report.
+            # Resolution priority (most reliable to least):
+            #   1. Bhavcopy CSV (committed to git, always available on cloud)
+            #   2. nselib historical API (requires Indian IP)
+            #   3. NSE live snapshot (requires Indian IP)
+
+            # Priority 1: Bhavcopy — works on all environments including Streamlit Cloud
+            bhav_close = get_close_from_bhavcopy(curr_friday_actual, disp_name)
+            if bhav_close is not None:
+                return yf_prev, bhav_close, "Bhavcopy"
+
+            # Priority 2: nselib historical API (may fail on cloud)
             historical_close = None
             if disp_name in NSELIB_MAP:
                 try:
                     from nselib import capital_market
                     nse_name = NSELIB_MAP[disp_name]
-                    # nselib requires to_date > from_date
                     from_str = (curr_friday_actual - timedelta(days=1)).strftime("%d-%m-%Y")
                     to_str = (curr_friday_actual + timedelta(days=1)).strftime("%d-%m-%Y")
                     hist_df = capital_market.index_data(nse_name, from_str, to_str)
@@ -187,13 +196,15 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
                             historical_close = float(match.iloc[0]["CLOSE_INDEX_VAL"])
                 except Exception:
                     pass
-            
+
             if historical_close is not None:
                 return yf_prev, historical_close, "NSE_Historical"
-            elif nse_live is not None:
+
+            # Priority 3: NSE live snapshot (may fail on cloud)
+            if nse_live is not None:
                 return yf_prev, nse_live, "NSE_Fallback_Live"
-            else:
-                return yf_prev, None, "YF_Stale_Week"
+
+            return yf_prev, None, "YF_Stale_Week"
         elif nse_live is not None:
             # YF date is missing entirely — fall back to NSE live
             return yf_prev, nse_live, "NSE_Fallback_Live"

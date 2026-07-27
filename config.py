@@ -107,6 +107,18 @@ NSELIB_MAP = {
     "NIFTYMIDCA": "NIFTY MIDCAP 100",
 }
 
+# Bhavcopy index close map — maps display names to bhavcopy TckrSymb.
+# The UndrlygPric column in the derivatives Bhavcopy holds the spot close
+# for each underlying index and is available in the locally committed
+# data/YYYY/YYYYMMDD/bhavcopy.csv files, making it the most reliable fallback
+# on cloud environments (Streamlit Cloud) where NSE APIs are blocked.
+BHAVCOPY_INDEX_MAP = {
+    "NIFTY 50":      "NIFTY",
+    "BANK NIFTY":    "BANKNIFTY",
+    "FINNIFTY":      "FINNIFTY",
+    "MIDCAP SELECT": "MIDCPNIFTY",
+}
+
 # Historical data fetch windows (in calendar days)
 # 1200 days ≈ 830 trading days ≈ 200-week EMA requires ~400 trading days
 LONG_HISTORY_DAYS = 1200  # For EMA-200 calculation
