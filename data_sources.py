@@ -130,18 +130,7 @@ def fetch_with_fallback(display_name: str,
         Tuple of (symbol_used, dataframe)
         Returns (None, empty_df) if all symbols fail
     """
-    candidates = YF_SYMBOLS.get(display_name, [])
-
-    # De-duplicate while preserving order
-    unique_candidates = list(dict.fromkeys(candidates))
-
-    # Try each Yahoo Finance symbol
-    for symbol in unique_candidates:
-        df = fetch_yahoo_finance(symbol, start_date, end_date)
-        if not df.empty:
-            return symbol, df
-
-    # Try nselib fallback if configured
+    # 1. Try nselib first (most accurate for NSE official close)
     if display_name in NSELIB_MAP:
         try:
             from nselib import capital_market
@@ -150,7 +139,7 @@ def fetch_with_fallback(display_name: str,
             from_str = start_date.strftime("%d-%m-%Y")
             to_str = end_date.strftime("%d-%m-%Y")
 
-            print(f"  [INFO] {display_name}: Trying nselib fallback [{nse_index_name}]")
+            print(f"  [INFO] {display_name}: Trying nselib (Primary) [{nse_index_name}]")
 
             df_nse = capital_market.index_data(
                 index=nse_index_name,
@@ -177,10 +166,26 @@ def fetch_with_fallback(display_name: str,
                 return f"nselib:{nse_index_name}", df_nse
 
         except Exception as e:
-            print(f"  [WARN] {display_name}: nselib fallback failed: {e}")
+            print(f"  [WARN] {display_name}: nselib failed: {e}")
 
+    # 2. Try Yahoo Finance fallback
+    candidates = YF_SYMBOLS.get(display_name, [])
+
+    # De-duplicate while preserving order
+    unique_candidates = list(dict.fromkeys(candidates))
+
+    # Try each Yahoo Finance symbol
+    for symbol in unique_candidates:
+        df = fetch_yahoo_finance(symbol, start_date, end_date)
+        if not df.empty:
+            # Reject severely stale YF data
+            last_dt = df.index[-1].date()
+            if (end_date - last_dt).days > 6:
+                print(f"  [WARN] {display_name}: YF data for {symbol} is stale, rejecting.")
+                continue
+            return symbol, df
     # All methods failed
-    if not unique_candidates:
+    if not unique_candidates and display_name not in NSELIB_MAP:
         print(f"  [WARN] {display_name}: No symbol defined")
     else:
         print(f"  [FAIL] {display_name}: All symbols failed")
