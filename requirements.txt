@@ -1,18 +1,18 @@
 # Weekly Equity Report Generator - Production Dependencies
 # Install with: pip install -r requirements.txt
 
-# Core dependencies (pinned for stability)
+# Core dependencies
 streamlit>=1.35.0
-python-docx==1.1.0
-lxml==5.1.0
-pandas==2.2.0
-yfinance==0.2.38
-requests==2.31.0
+python-docx
+lxml
+pandas
+yfinance
+requests
 
 # NSE data sources
-nsepython==2.5
-nselib==0.1.15
+nsepython
+nselib
 
 # Optional (for testing)
-pytest==8.0.0
-pytest-cov==4.1.0
+pytest
+pytest-cov
