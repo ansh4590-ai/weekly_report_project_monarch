@@ -128,56 +128,31 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
     def _resolve_close(disp_name, df):
         """
         Pick the most accurate current close in priority order:
-        1. Exact date match in Yahoo Finance data (non-NaN Close)
-        2. NSE live snapshot (if YF is missing the date OR Close is NaN)
-        3. Latest YF close (if YF data is recent enough — after prev_friday)
+        1. Exact date match in Yahoo Finance data
+        2. NSE live snapshot (if YF is missing the date)
+        3. Latest YF close (if YF data is not stale vs the previous Friday)
         4. None (if YF data is fully stale or all sources are empty)
-
-        Known YF quirk: some indices (FINNIFTY, NIFTYNEXT50) return a row
-        for curr_friday with Open/High/Low present but Close = NaN.
-        get_close_on_date() then falls back to the last non-NaN close
-        which is prev_friday — giving 0% weekly change.  We detect this
-        case and explicitly use the NSE live snapshot instead.
         """
         nse_live = nse_snap.get(disp_name, {}).get("close")
         yf_has_exact = False
-        yf_curr_nan = False   # True when YF has a row for curr_friday but Close is NaN
         is_stale_week = False
 
         if df is not None and not df.empty:
             ts = pd.Timestamp(curr_friday_actual)
             valid_df = df.dropna(subset=["Close"])
             yf_has_exact = ts in valid_df.index
-
-            # Detect the YF NaN-close quirk: row exists but Close is NaN
-            if not yf_has_exact and ts in df.index:
-                yf_curr_nan = True
-
-            # Stale = last valid close is strictly before prev_friday
-            # (using < not <= so that data landing exactly on prev_friday
-            #  does NOT incorrectly mark the whole fetch as stale)
-            is_stale_week = (
-                valid_df.empty
-                or valid_df.index[-1] < pd.Timestamp(prev_friday_actual)
-            )
+            is_stale_week = valid_df.empty or valid_df.index[-1] <= pd.Timestamp(prev_friday_actual)
 
         yf_curr = get_close_on_date(df, curr_friday_actual)
         yf_prev = get_close_on_date(df, prev_friday_actual)
 
         if yf_has_exact:
-            # YF has a proper (non-NaN) close for curr_friday — use it
             return yf_prev, yf_curr, "YF"
-        elif yf_curr_nan or is_stale_week:
-            # YF Close is NaN or data is too old — prefer NSE live
-            if nse_live is not None:
-                return yf_prev, nse_live, "NSE_Fallback"
-            else:
-                return yf_prev, None, "YF_Stale_Week"
         elif nse_live is not None:
-            # YF date is missing entirely — fall back to NSE live
             return yf_prev, nse_live, "NSE_Fallback"
+        elif is_stale_week:
+            return yf_prev, None, "YF_Stale_Week"
         else:
-            # Best-effort: use whatever YF returned
             return yf_prev, yf_curr, "YF_Stale"
 
     # Build indices data
@@ -187,10 +162,6 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
 
     indices = []
     data_quality = {"indices_ok": 0, "indices_total": len(INDEX_NAMES)}
-
-    # resolved_closes stores the corrected curr close for each display name,
-    # shared by the EMA and S/R sections below.
-    resolved_closes = {}
 
     for disp_name in INDEX_NAMES:
         df = yf_cache.get(disp_name)
@@ -204,7 +175,6 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
             src = "incomplete"
 
         close_rounded = round2(curr_close)
-        resolved_closes[disp_name] = curr_close  # store for EMA/S&R use
         print(f"  {disp_name:15s}: close={close_rounded}  prev={round2(yf_prev)}  weekly%={weekly_pct}  [{src}]")
         indices.append({"name": disp_name, "close": close_rounded, "pct": weekly_pct})
 
@@ -262,20 +232,15 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
         try:
             ts_curr = pd.Timestamp(curr_friday_actual)
             valid_df = df.dropna(subset=["Close"])
+            subset = valid_df[valid_df.index <= ts_curr]
+
+            if subset.empty:
+                raise ValueError(f"No data on or before {curr_friday_actual}")
+
+            close_val = round0(float(subset["Close"].iloc[-1]))
             close_series = valid_df["Close"]
 
-            # Use the resolved close (NSE-corrected) for display and bias,
-            # not the raw YF last close which may be stale (e.g. FINNIFTY Jul 17).
-            resolved_curr = resolved_closes.get(disp_name)
-            if resolved_curr is not None:
-                close_val = round0(float(resolved_curr))
-            else:
-                subset = valid_df[valid_df.index <= ts_curr]
-                if subset.empty:
-                    raise ValueError(f"No data on or before {curr_friday_actual}")
-                close_val = round0(float(subset["Close"].iloc[-1]))
-
-            # Calculate all EMAs (uses full YF history for accuracy)
+            # Calculate all EMAs
             emas = {}
             for period in EMA_PERIODS:
                 ema_series = calculate_ema(close_series, period)

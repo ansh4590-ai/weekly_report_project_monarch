@@ -104,32 +104,12 @@ def aggregate_weekly_ohlc(daily_df: pd.DataFrame,
         'High': 'max',
         'Low': 'min',
         'Close': 'last'
-    })
-
-    # Drop weeks where ALL OHLC values are NaN (i.e., no trading data at all).
-    # Do NOT use plain .dropna() — Yahoo Finance sometimes returns a valid
-    # Open/High/Low but NaN for Close on the most recent day (a known YF quirk).
-    # Dropping on all columns would silently remove the current week's candle.
-    weekly = weekly.dropna(subset=['Open', 'High', 'Low'])
-
-    # Heal any remaining NaN Close (YF quirk: Close not yet published for today).
-    # Fill with the last valid daily Close from the raw data that falls on or
-    # before the week-ending date, so the candle renders correctly.
-    if not weekly.empty and weekly['Close'].isna().any():
-        # Build a clean daily close series (drop NaN rows)
-        daily_close = df['Close'].dropna()
-        for week_end, row in weekly[weekly['Close'].isna()].iterrows():
-            available = daily_close[daily_close.index <= week_end]
-            if not available.empty:
-                weekly.at[week_end, 'Close'] = float(available.iloc[-1])
-
-    # Drop any week still missing Close after the heal attempt
-    weekly = weekly.dropna(subset=['Close'])
-
+    }).dropna()
+    
     # Take only the last N weeks
     if len(weekly) > num_weeks:
         weekly = weekly.iloc[-num_weeks:]
-
+    
     return weekly
 
 
