@@ -178,7 +178,11 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
             # Priority 1: Bhavcopy — works on all environments including Streamlit Cloud
             bhav_close = get_close_from_bhavcopy(curr_friday_actual, disp_name)
             if bhav_close is not None:
-                return yf_prev, bhav_close, "Bhavcopy"
+                # Also get prev_close from bhavcopy when YF is unavailable.
+                # (yf_prev is None when df is empty, breaking the weekly % calc)
+                bhav_prev = get_close_from_bhavcopy(prev_friday_actual, disp_name)
+                effective_prev = bhav_prev if bhav_prev is not None else yf_prev
+                return effective_prev, bhav_close, "Bhavcopy"
 
             # Priority 2: nselib historical API (may fail on cloud)
             historical_close = None

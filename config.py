@@ -117,6 +117,7 @@ BHAVCOPY_INDEX_MAP = {
     "BANK NIFTY":    "BANKNIFTY",
     "FINNIFTY":      "FINNIFTY",
     "MIDCAP SELECT": "MIDCPNIFTY",
+    "NIFTYNEXT50":   "NIFTYNXT50",
 }
 
 # Historical data fetch windows (in calendar days)
