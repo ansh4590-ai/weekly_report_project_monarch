@@ -208,6 +208,11 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
             if nse_live is not None:
                 return yf_prev, nse_live, "NSE_Fallback_Live"
 
+            # If all fallbacks fail, DO NOT throw away yf_curr if we have it!
+            # (If YF gave us Thursday's price, use it instead of blanking out SENSEX)
+            if yf_curr is not None:
+                return yf_prev, yf_curr, "YF_Stale_Fallback_Failed"
+
             return yf_prev, None, "YF_Stale_Week"
         elif nse_live is not None:
             # YF date is missing entirely — fall back to NSE live
