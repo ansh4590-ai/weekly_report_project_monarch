@@ -269,6 +269,11 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
             resolved_curr = resolved_closes.get(disp_name)
             if resolved_curr is not None:
                 close_val = round0(float(resolved_curr))
+                
+                # ── NEW: Patch the missing Close so EMAs are calculated on the correct final day ──
+                if ts_curr not in close_series.index or pd.isna(close_series.get(ts_curr)):
+                    close_series.loc[ts_curr] = resolved_curr
+                    close_series = close_series.sort_index()
             else:
                 subset = valid_df[valid_df.index <= ts_curr]
                 if subset.empty:
@@ -712,11 +717,11 @@ def fill_docx_document(mkt_data, fii_dii, narrative, start_date, end_date,
     # overwriting the gradient header design when it saves the document.
     print("\n[1/6] Preparing document...")
     _, curr_friday_actual = mkt_data["actual_fridays"]
-    # Header uses Saturday (Friday + 1 day) per report convention
-    header_saturday = curr_friday_actual + timedelta(days=1)
-    # Use non-zero-padded day to match reference format: "July 4, 2026" not "July 04, 2026"
-    header_date_str = header_saturday.strftime("%B %-d, %Y") if os.name != 'nt' else \
-                      header_saturday.strftime("%B %#d, %Y")
+    # Header uses Monday (End Sunday + 1 day) per user request
+    header_monday = end_date + timedelta(days=1)
+    # Use non-zero-padded day to match reference format: "July 27, 2026" not "July 027, 2026"
+    header_date_str = header_monday.strftime("%B %-d, %Y") if os.name != 'nt' else \
+                      header_monday.strftime("%B %#d, %Y")
 
     shutil.copy2(TEMPLATE_PATH, output_path)
 
@@ -2152,15 +2157,27 @@ def main():
         
         yf_cache = mkt_data.get("yf_cache", {})
         
+        # Build resolved_closes so chart generator uses the correct authoritative
+        # close for indices like FINNIFTY where YF returns Close=NaN on the
+        # current Friday.  These closes were already resolved by fetch_all_market_data.
+        resolved_closes = {
+            row["name"]: row["close"]
+            for row in mkt_data.get("indices", [])
+            if row.get("close") is not None
+        }
+        
         # 1. Generate chart images
-        chart_paths = chart_generator.generate_all_charts(yf_cache, end_date)
+        chart_paths = chart_generator.generate_all_charts(
+            yf_cache, end_date, resolved_closes=resolved_closes
+        )
         
         # 2. Generate technical commentary
         tech_outlook = chart_generator.generate_all_technical_data(
             yf_cache=yf_cache,
             sr_rows=mkt_data["sr"],
             indices_data=mkt_data["indices"],
-            end_date=end_date
+            end_date=end_date,
+            resolved_closes=resolved_closes,
         )
         print("  [OK] Page 2 data generated successfully.")
     except Exception as e:

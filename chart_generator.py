@@ -63,41 +63,46 @@ NUM_WEEKS = 40
 
 def aggregate_weekly_ohlc(daily_df: pd.DataFrame,
                           end_date: date,
-                          num_weeks: int = NUM_WEEKS) -> pd.DataFrame:
+                          num_weeks: int = NUM_WEEKS,
+                          resolved_close: Optional[float] = None) -> pd.DataFrame:
     """
     Aggregate daily OHLC data into weekly OHLC candles.
-    
-    Each week runs Monday–Friday. The weekly candle:
+
+    Each week runs Monday-Friday. The weekly candle:
     - Open  = Monday's open (or first trading day of week)
     - High  = Max high of the week
     - Low   = Min low of the week
     - Close = Friday's close (or last trading day of week)
-    
+
     Args:
         daily_df: DataFrame with DatetimeIndex and OHLC columns
         end_date: End date for the chart
         num_weeks: Number of weekly candles to generate
-        
+        resolved_close: Authoritative close from NSE/mkt_data for the current
+            week.  When provided it overrides the YF close for the last candle
+            — critical for indices like FINNIFTY where YF returns Close=NaN
+            for the current Friday while Open/High/Low are present.
+
     Returns:
         DataFrame with weekly OHLC data, indexed by week-ending date
     """
     if daily_df is None or daily_df.empty:
         return pd.DataFrame()
-    
+
     df = daily_df.copy()
-    
+
     # Ensure we have required columns
     for col in ['Open', 'High', 'Low', 'Close']:
         if col not in df.columns:
             return pd.DataFrame()
-    
+
     # Filter up to end_date
     ts_end = pd.Timestamp(end_date)
     df = df[df.index <= ts_end]
-    
+
     if df.empty:
         return pd.DataFrame()
-    
+
     # Resample to weekly (W-FRI = week ending Friday)
     weekly = df.resample('W-FRI').agg({
         'Open': 'first',
@@ -111,6 +116,23 @@ def aggregate_weekly_ohlc(daily_df: pd.DataFrame,
     # Open/High/Low but NaN for Close on the most recent day (a known YF quirk).
     # Dropping on all columns would silently remove the current week's candle.
     weekly = weekly.dropna(subset=['Open', 'High', 'Low'])
+
+    # ── Patch last candle with authoritative resolved_close if provided ──────
+    # This handles the FINNIFTY / NIFTYNEXT50 YF quirk where Close = NaN for
+    # the current Friday but Open / High / Low are populated.  The plain
+    # daily_close heal below would only find the *previous* week's close,
+    # making the last candle wrong.  resolved_close comes from NSE live data
+    # (already validated by fetch_all_market_data) so it is always accurate.
+    if resolved_close is not None and not weekly.empty:
+        last_idx = weekly.index[-1]
+        last_close = weekly.at[last_idx, 'Close']
+        if pd.isna(last_close) or abs(float(last_close) - resolved_close) > 1.0:
+            weekly.at[last_idx, 'Close'] = resolved_close
+            # Ensure High >= resolved_close and Low <= resolved_close
+            if weekly.at[last_idx, 'High'] < resolved_close:
+                weekly.at[last_idx, 'High'] = resolved_close
+            if weekly.at[last_idx, 'Low'] > resolved_close:
+                weekly.at[last_idx, 'Low'] = resolved_close
 
     # Heal any remaining NaN Close (YF quirk: Close not yet published for today).
     # Fill with the last valid daily Close from the raw data that falls on or
@@ -571,72 +593,82 @@ def generate_technical_commentary(index_name: str,
 
 def generate_all_charts(yf_cache: Dict[str, pd.DataFrame],
                         end_date: date,
-                        output_dir: Optional[str] = None) -> Dict[str, str]:
+                        output_dir: Optional[str] = None,
+                        resolved_closes: Optional[Dict[str, float]] = None) -> Dict[str, str]:
     """
     Generate candlestick charts for all three indices.
-    
+
     Args:
         yf_cache: Dict mapping display names to DataFrames
         end_date: End date for charts
         output_dir: Directory to save charts (default: temp dir)
-        
+        resolved_closes: Optional dict mapping display-name -> authoritative
+            close price (e.g. from NSE live data).  Used to fix the last
+            weekly candle when YF returns Close=NaN (FINNIFTY quirk).
+
     Returns:
         Dict mapping index key to PNG file path:
         {"NIFTY": "path/nifty_chart.png", ...}
     """
     if output_dir is None:
         output_dir = tempfile.mkdtemp(prefix='equity_charts_')
-    
+
     os.makedirs(output_dir, exist_ok=True)
-    
+
     chart_map = {
         "NIFTY": "NIFTY 50",
         "BANK NIFTY": "BANK NIFTY",
         "FINNIFTY": "FINNIFTY"
     }
-    
+
+    resolved_closes = resolved_closes or {}
     results = {}
-    
+
     for chart_name, data_name in chart_map.items():
         df = yf_cache.get(data_name)
-        
+        rc = resolved_closes.get(data_name)  # authoritative close for this index
+
         print(f"  [CHART] Generating {chart_name} weekly candlestick chart...")
-        
+
         if df is None or df.empty:
             print(f"    [WARN] No data for {chart_name}")
             weekly = pd.DataFrame()
-            current_close = None
+            current_close = rc
         else:
-            weekly = aggregate_weekly_ohlc(df, end_date)
+            weekly = aggregate_weekly_ohlc(df, end_date, resolved_close=rc)
             if not weekly.empty:
                 current_close = float(weekly['Close'].iloc[-1])
                 print(f"    [OK] {len(weekly)} weekly candles, close={current_close:,.2f}")
             else:
-                current_close = None
+                current_close = rc
                 print(f"    [WARN] Weekly aggregation produced no data")
-        
+
         fname = f"{chart_name.lower().replace(' ', '_')}_weekly.png"
         fpath = os.path.join(output_dir, fname)
-        
+
         generate_candlestick_chart(weekly, fpath, current_close)
         results[chart_name] = fpath
-    
+
     return results
 
 
 def generate_all_technical_data(yf_cache: Dict[str, pd.DataFrame],
-                                 sr_rows: list,
-                                 indices_data: list,
-                                 end_date: date) -> Dict[str, dict]:
+                                sr_rows: list,
+                                indices_data: list,
+                                end_date: date,
+                                resolved_closes: Optional[Dict[str, float]] = None) -> Dict[str, dict]:
     """
     Generate chart paths, patterns, and commentary for all three indices.
-    
+
     Args:
         yf_cache: Dict mapping display names to DataFrames
         sr_rows: S/R data from market data
         indices_data: Indices data from market data
         end_date: Report end date
-        
+        resolved_closes: Optional dict mapping display-name -> authoritative
+            close price.  Passed into aggregate_weekly_ohlc to fix the last
+            candle for indices where YF returns Close=NaN (e.g. FINNIFTY).
+
     Returns:
         Dict mapping chart name to {chart_path, pattern, commentary, weekly_df}
     """
@@ -645,51 +677,57 @@ def generate_all_technical_data(yf_cache: Dict[str, pd.DataFrame],
         "BANK NIFTY": {"data_name": "BANK NIFTY", "sr_name": "BANK NIFTY", "is_benchmark": False},
         "FINNIFTY": {"data_name": "FINNIFTY", "sr_name": "FINNIFTY", "is_benchmark": False},
     }
-    
+
     # Build SR lookup
     sr_lookup = {row['name']: row for row in sr_rows}
-    
+
     # Build indices lookup for weekly pct
     idx_lookup = {d['name']: d for d in indices_data}
-    
+
+    resolved_closes = resolved_closes or {}
     results = {}
-    
+
     for chart_name, cfg in chart_map.items():
         df = yf_cache.get(cfg['data_name'])
-        
-        # Weekly OHLC
-        weekly = aggregate_weekly_ohlc(df, end_date) if df is not None and not df.empty else pd.DataFrame()
-        
+        rc = resolved_closes.get(cfg['data_name'])  # authoritative close
+
+        # Weekly OHLC — pass resolved close so last candle is correct
+        weekly = (
+            aggregate_weekly_ohlc(df, end_date, resolved_close=rc)
+            if df is not None and not df.empty
+            else pd.DataFrame()
+        )
+
         # Pattern detection
         pattern = detect_candlestick_pattern(weekly) if not weekly.empty else "indecisive"
-        
+
         # Weekly pct
         idx_data = idx_lookup.get(cfg['data_name'], {})
         weekly_pct = idx_data.get('pct')
-        
+
         # S/R data
         sr = sr_lookup.get(cfg['sr_name'], {})
-        
+
         # Get benchmark and banknifty percentages for relative performance logic
         benchmark_pct = idx_lookup.get("NIFTY 50", {}).get('pct')
         banknifty_pct = idx_lookup.get("BANK NIFTY", {}).get('pct')
-        
+
         # Commentary
         commentary = generate_technical_commentary(
             chart_name, pattern, weekly_pct, sr, cfg['is_benchmark'],
             benchmark_pct=benchmark_pct, banknifty_pct=banknifty_pct
         )
-        
+
         results[chart_name] = {
             'weekly_df': weekly,
             'pattern': pattern,
             'commentary': commentary,
         }
-        
+
         print(f"  [{chart_name}] Pattern: {pattern}")
         for i, bullet in enumerate(commentary):
             print(f"    Bullet {i+1}: {bullet[:70]}...")
-    
+
     return results
 
 

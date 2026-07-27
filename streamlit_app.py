@@ -74,6 +74,7 @@ _DEFAULTS = {
     "start_date":       None,
     "end_date":         None,
     "report_path":      None,
+    "pdf_path":         None,   # PDF conversion output (None if unavailable)
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -151,6 +152,7 @@ if fetch_btn:
         "start_date":  start_date,
         "end_date":    end_date,
         "report_path": None,
+        "pdf_path":    None,   # clear old PDF so stale file never appears
     })
 
     with st.status(
@@ -318,16 +320,29 @@ if st.session_state.mkt_data is not None:
 
     # ── GENERATE REPORT ──────────────────────────────────────────────
     if st.button("📄 Generate Weekly Report", type="primary"):
-        mkt_data = st.session_state.mkt_data
+        import copy
 
-        # Apply S/R overrides: 0 == left blank → None (matches CLI "skip" behaviour)
+        # CRITICAL: deep-copy so we never mutate the session-state object.
+        # Mutating mkt_data["sr"] in-place corrupts all future "Generate" clicks.
+        mkt_data = copy.deepcopy(st.session_state.mkt_data)
+
+        # Apply S/R overrides from the number_input widgets.
+        # A widget value of 0 means "leave blank" only when the user deliberately
+        # set it to 0.  We use the pre-filled auto value (stored in mkt_data["sr"])
+        # as the fallback so a widget that was never touched still uses auto data.
         for row in mkt_data["sr"]:
             ov = sr_inputs.get(row["name"], {})
-            row["s2"] = ov.get("s2") or None
-            row["s1"] = ov.get("s1") or None
-            row["r1"] = ov.get("r1") or None
-            row["r2"] = ov.get("r2") or None
-            if not any([row["s1"], row["s2"], row["r1"], row["r2"]]):
+            for key in ("s2", "s1", "r1", "r2"):
+                widget_val = ov.get(key)
+                auto_val   = row.get(key)
+                # Only blank the field when the widget is explicitly 0 AND
+                # the auto-calculated value was non-zero (meaning user cleared it).
+                if widget_val is not None and widget_val != 0:
+                    row[key] = widget_val
+                elif widget_val == 0 and auto_val:
+                    row[key] = None   # user explicitly cleared it
+                # else: widget is 0 and auto was also 0/None — leave auto value
+            if not any(row.get(k) for k in ("s1", "s2", "r1", "r2")):
                 row["bias"] = ""
 
         start_date = st.session_state.start_date
@@ -356,13 +371,24 @@ if st.session_state.mkt_data is not None:
                 # 3) Charts + technical outlook
                 progress.write("📊  Generating charts & technical outlook …")
                 yf_cache = mkt_data.get("yf_cache", {})
+                # Build resolved_closes so chart generator uses the correct
+                # authoritative close for indices like FINNIFTY where Yahoo
+                # Finance returns Close=NaN for the current Friday.
+                resolved_closes = {
+                    row["name"]: row["close"]
+                    for row in mkt_data.get("indices", [])
+                    if row.get("close") is not None
+                }
                 try:
-                    chart_paths = chart_generator.generate_all_charts(yf_cache, end_date)
+                    chart_paths = chart_generator.generate_all_charts(
+                        yf_cache, end_date, resolved_closes=resolved_closes
+                    )
                     tech_outlook = chart_generator.generate_all_technical_data(
                         yf_cache=yf_cache,
                         sr_rows=mkt_data["sr"],
                         indices_data=mkt_data["indices"],
                         end_date=end_date,
+                        resolved_closes=resolved_closes,
                     )
                 except Exception as e:
                     progress.write(f"⚠️  Charts/outlook generation failed: {e}")
@@ -387,39 +413,39 @@ if st.session_state.mkt_data is not None:
                 pdf_path = output_path.replace(".docx", ".pdf")
                 pdf_ok = False
 
-                # ── Method 1: LibreOffice (Linux / Streamlit Cloud) ──
+                # ── Method 1: docx2pdf (Windows with MS Word installed) ──
                 try:
-                    import subprocess, shutil
-                    lo_bin = shutil.which("libreoffice") or shutil.which("soffice")
-                    if lo_bin:
-                        result = subprocess.run(
-                            [
-                                lo_bin, "--headless", "--convert-to", "pdf",
-                                "--outdir", os.path.dirname(output_path),
-                                output_path,
-                            ],
-                            capture_output=True, text=True, timeout=60,
-                        )
-                        if result.returncode == 0 and os.path.exists(pdf_path):
-                            pdf_ok = True
-                            progress.write("📄  PDF created via LibreOffice.")
-                except Exception as _lo_err:
-                    progress.write(f"⚠️  LibreOffice PDF attempt: {_lo_err}")
+                    from docx2pdf import convert
+                    convert(output_path, pdf_path)
+                    if os.path.exists(pdf_path):
+                        pdf_ok = True
+                        progress.write("📄  PDF created successfully.")
+                except Exception as _d2p_err:
+                    progress.write(f"⚠️  docx2pdf: {_d2p_err}")
 
-                # ── Method 2: docx2pdf (Windows / local with MS Word) ──
+                # ── Method 2: LibreOffice fallback (Linux / Streamlit Cloud) ──
                 if not pdf_ok:
                     try:
-                        from docx2pdf import convert
-                        convert(output_path, pdf_path)
-                        if os.path.exists(pdf_path):
-                            pdf_ok = True
-                            progress.write("📄  PDF created via docx2pdf.")
-                    except Exception as _d2p_err:
-                        progress.write(f"⚠️  docx2pdf PDF attempt: {_d2p_err}")
+                        import subprocess, shutil
+                        lo_bin = shutil.which("libreoffice") or shutil.which("soffice")
+                        if lo_bin:
+                            result = subprocess.run(
+                                [
+                                    lo_bin, "--headless", "--convert-to", "pdf",
+                                    "--outdir", os.path.dirname(output_path),
+                                    output_path,
+                                ],
+                                capture_output=True, text=True, timeout=60,
+                            )
+                            if result.returncode == 0 and os.path.exists(pdf_path):
+                                pdf_ok = True
+                                progress.write("📄  PDF created via LibreOffice.")
+                    except Exception as _lo_err:
+                        progress.write(f"⚠️  LibreOffice: {_lo_err}")
 
                 st.session_state.pdf_path = pdf_path if pdf_ok else None
                 if not pdf_ok:
-                    progress.write("⚠️  PDF conversion unavailable on this server — download the .docx file instead.")
+                    progress.write("⚠️  PDF conversion unavailable — download the .docx file instead.")
 
                 progress.update(label="✅  Report generated successfully", state="complete")
 
