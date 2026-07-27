@@ -216,7 +216,7 @@ RESEARCH_TEAM = [
     {
         "name": "Ansh Maheshwari",
         "designation": "Intern",
-        "email": "research@mnclgroup.com",
+        "email": "anshmaheshwari2290@gmail.com",
         "phone": "-",
     }
 ]
