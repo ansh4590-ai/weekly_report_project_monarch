@@ -131,40 +131,45 @@ def fetch_with_fallback(display_name: str,
         Returns (None, empty_df) if all symbols fail
     """
     # 1. Try nselib first (most accurate for NSE official close)
+    #    Wrapped in a 5-second timeout so it fails fast on Streamlit Cloud
+    #    where outbound NSE requests are blocked.
     if display_name in NSELIB_MAP:
-        try:
+        import concurrent.futures
+
+        nse_index_name = NSELIB_MAP[display_name]
+        from_str = start_date.strftime("%d-%m-%Y")
+        to_str = end_date.strftime("%d-%m-%Y")
+
+        def _nselib_fetch():
             from nselib import capital_market
-
-            nse_index_name = NSELIB_MAP[display_name]
-            from_str = start_date.strftime("%d-%m-%Y")
-            to_str = end_date.strftime("%d-%m-%Y")
-
-            print(f"  [INFO] {display_name}: Trying nselib (Primary) [{nse_index_name}]")
-
-            df_nse = capital_market.index_data(
+            return capital_market.index_data(
                 index=nse_index_name,
                 from_date=from_str,
-                to_date=to_str
+                to_date=to_str,
             )
 
+        try:
+            print(f"  [INFO] {display_name}: Trying nselib (Primary) [{nse_index_name}]")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_nselib_fetch)
+                df_nse = future.result(timeout=5)  # fail fast if NSE is unreachable
+
             if df_nse is not None and not df_nse.empty:
-                # Normalize nselib format to match yfinance
                 df_nse["Date"] = pd.to_datetime(df_nse["TIMESTAMP"], format="%d-%b-%Y")
                 df_nse.set_index("Date", inplace=True)
                 df_nse.sort_index(inplace=True)
-
                 df_nse = df_nse.rename(columns={
                     "CLOSE_INDEX_VAL": "Close",
                     "OPEN_INDEX_VAL": "Open",
                     "HIGH_INDEX_VAL": "High",
-                    "LOW_INDEX_VAL": "Low"
+                    "LOW_INDEX_VAL": "Low",
                 })
-
                 for col in ["Close", "Open", "High", "Low"]:
                     df_nse[col] = pd.to_numeric(df_nse[col], errors="coerce")
-
                 return f"nselib:{nse_index_name}", df_nse
 
+        except concurrent.futures.TimeoutError:
+            print(f"  [WARN] {display_name}: nselib timed out — NSE likely unreachable (cloud). Falling back to YF.")
         except Exception as e:
             print(f"  [WARN] {display_name}: nselib failed: {e}")
 
