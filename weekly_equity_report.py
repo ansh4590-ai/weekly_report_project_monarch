@@ -188,6 +188,10 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
     indices = []
     data_quality = {"indices_ok": 0, "indices_total": len(INDEX_NAMES)}
 
+    # resolved_closes stores the corrected curr close for each display name,
+    # shared by the EMA and S/R sections below.
+    resolved_closes = {}
+
     for disp_name in INDEX_NAMES:
         df = yf_cache.get(disp_name)
         yf_prev, curr_close, src = _resolve_close(disp_name, df)
@@ -200,6 +204,7 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
             src = "incomplete"
 
         close_rounded = round2(curr_close)
+        resolved_closes[disp_name] = curr_close  # store for EMA/S&R use
         print(f"  {disp_name:15s}: close={close_rounded}  prev={round2(yf_prev)}  weekly%={weekly_pct}  [{src}]")
         indices.append({"name": disp_name, "close": close_rounded, "pct": weekly_pct})
 
@@ -257,15 +262,20 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
         try:
             ts_curr = pd.Timestamp(curr_friday_actual)
             valid_df = df.dropna(subset=["Close"])
-            subset = valid_df[valid_df.index <= ts_curr]
-
-            if subset.empty:
-                raise ValueError(f"No data on or before {curr_friday_actual}")
-
-            close_val = round0(float(subset["Close"].iloc[-1]))
             close_series = valid_df["Close"]
 
-            # Calculate all EMAs
+            # Use the resolved close (NSE-corrected) for display and bias,
+            # not the raw YF last close which may be stale (e.g. FINNIFTY Jul 17).
+            resolved_curr = resolved_closes.get(disp_name)
+            if resolved_curr is not None:
+                close_val = round0(float(resolved_curr))
+            else:
+                subset = valid_df[valid_df.index <= ts_curr]
+                if subset.empty:
+                    raise ValueError(f"No data on or before {curr_friday_actual}")
+                close_val = round0(float(subset["Close"].iloc[-1]))
+
+            # Calculate all EMAs (uses full YF history for accuracy)
             emas = {}
             for period in EMA_PERIODS:
                 ema_series = calculate_ema(close_series, period)
