@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore")
 from config import (
     TEMPLATE_PATH, INDEX_NAMES, SECTOR_NAMES, EMA_NAMES, EMA_PERIODS,
     LONG_WINDOW_INDICES, LONG_HISTORY_DAYS, SHORT_HISTORY_DAYS,
-    SR_ROUNDING_RULES, SR_FACTORS, COLOR_GREEN, COLOR_RED,
+    SR_ROUNDING_RULES, SR_FACTORS, COLOR_GREEN, COLOR_RED, NSELIB_MAP,
     # Page 2 constants
     CHART_INDICES, HEADING_COLOR, HEADING_FONT_SIZE_HALFPTS,
     CHART_TABLE_WIDTH, CHART_TABLE_COL0_WIDTH, CHART_TABLE_COL1_WIDTH,
@@ -167,15 +167,36 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
         if yf_has_exact:
             # YF has a proper (non-NaN) close for curr_friday — use it
             return yf_prev, yf_curr, "YF"
-        elif yf_curr_nan or is_stale_week:
-            # YF Close is NaN or data is too old — prefer NSE live
-            if nse_live is not None:
-                return yf_prev, nse_live, "NSE_Fallback"
+        elif yf_curr_nan or is_stale_week or (df is None or df.empty):
+            # YF Close is NaN, data is too old, or YF returned no data at all.
+            # Fetch the true historical close from nselib so we don't accidentally
+            # use Monday's live snapshot data for a Friday report.
+            historical_close = None
+            if disp_name in NSELIB_MAP:
+                try:
+                    from nselib import capital_market
+                    nse_name = NSELIB_MAP[disp_name]
+                    # nselib requires to_date > from_date
+                    from_str = (curr_friday_actual - timedelta(days=1)).strftime("%d-%m-%Y")
+                    to_str = (curr_friday_actual + timedelta(days=1)).strftime("%d-%m-%Y")
+                    hist_df = capital_market.index_data(nse_name, from_str, to_str)
+                    if hist_df is not None and not hist_df.empty:
+                        hist_df["Date"] = pd.to_datetime(hist_df["TIMESTAMP"], format="%d-%b-%Y")
+                        match = hist_df[hist_df["Date"] == pd.Timestamp(curr_friday_actual)]
+                        if not match.empty:
+                            historical_close = float(match.iloc[0]["CLOSE_INDEX_VAL"])
+                except Exception:
+                    pass
+            
+            if historical_close is not None:
+                return yf_prev, historical_close, "NSE_Historical"
+            elif nse_live is not None:
+                return yf_prev, nse_live, "NSE_Fallback_Live"
             else:
                 return yf_prev, None, "YF_Stale_Week"
         elif nse_live is not None:
             # YF date is missing entirely — fall back to NSE live
-            return yf_prev, nse_live, "NSE_Fallback"
+            return yf_prev, nse_live, "NSE_Fallback_Live"
         else:
             # Best-effort: use whatever YF returned
             return yf_prev, yf_curr, "YF_Stale"

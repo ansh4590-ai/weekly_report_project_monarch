@@ -88,11 +88,23 @@ YF_SYMBOLS = {
 
 # nselib fallback mappings
 NSELIB_MAP = {
+    # Indices
+    "FINNIFTY": "NIFTY FINANCIAL SERVICES",
+    "NIFTYNEXT50": "NIFTY NEXT 50",
+    "MIDCAP SELECT": "NIFTY MIDCAP SELECT",
+    
+    # Sectors
+    "NIFTY AUTO": "NIFTY AUTO",
+    "NIFTY FMCG": "NIFTY FMCG",
+    "NIFTY METAL": "NIFTY METAL",
+    "NIFTY PSE": "NIFTY PSE",
+    "NIFTYPSUBANK": "NIFTY PSU BANK",
     "NIFTYPVTBA": "NIFTY PRIVATE BANK",
+    "NIFTY REALTY": "NIFTY REALTY",
+    "NIFTY MEDIA": "NIFTY MEDIA",
     "NIFTYINDDEFENCE": "NIFTY INDIA DEFENCE",
     "NIFTYSMLC": "NIFTY SMALLCAP 100",
     "NIFTYMIDCA": "NIFTY MIDCAP 100",
-    "MIDCAP SELECT": "NIFTY MIDCAP SELECT"
 }
 
 # Historical data fetch windows (in calendar days)
@@ -112,15 +124,15 @@ SR_R2_FACTOR = 1.025   # Resistance 2: +2.5% from close
 # Rounding rules for S/R levels
 SR_ROUNDING_RULES = {
     "NIFTY": 100,        # Round to nearest 100
-    "BANK NIFTY": 100,   # Round to nearest 100 (500 is too coarse)
+    "BANK NIFTY": 500,   # Round to nearest 500 (reference report uses 500)
     "FINNIFTY": 100,     # Round to nearest 100
 }
 
 # Per-index S/R percentage factors
 SR_FACTORS = {
-    "NIFTY":      {"s1": 0.985, "s2": 0.975, "r1": 1.015, "r2": 1.025},
-    "BANK NIFTY": {"s1": 0.985, "s2": 0.975, "r1": 1.015, "r2": 1.025},
-    "FINNIFTY":   {"s1": 0.985, "s2": 0.975, "r1": 1.015, "r2": 1.025},
+    "NIFTY":      {"s1": 0.976, "s2": 0.968, "r1": 1.022, "r2": 1.031},
+    "BANK NIFTY": {"s1": 0.976, "s2": 0.968, "r1": 1.022, "r2": 1.031},
+    "FINNIFTY":   {"s1": 0.976, "s2": 0.968, "r1": 1.022, "r2": 1.031},
 }
 
 # Network timeouts (seconds)
