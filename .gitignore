@@ -8,3 +8,4 @@ env/
 venv/
 *.log
 Weekly_Equity_Report_*.docx
+fii_dii_history.csv
