@@ -318,7 +318,7 @@ def fetch_nse_snapshot(session) -> Dict[str, Dict[str, Optional[float]]]:
     for url in urls:
         try:
             resp = session.get(url, timeout=NSE_TIMEOUT)
-            print(f"  [INFO] NSE allIndices → HTTP {resp.status_code}")
+            print(f"  [INFO] NSE allIndices -> HTTP {resp.status_code}")
 
             if resp.status_code != 200:
                 print(f"  [WARN] Response body: {resp.text[:300]}")

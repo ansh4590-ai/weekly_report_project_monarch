@@ -384,14 +384,42 @@ if st.session_state.mkt_data is not None:
                 st.session_state.report_path = output_path
                 
                 progress.write("📄  Converting to PDF …")
+                pdf_path = output_path.replace(".docx", ".pdf")
+                pdf_ok = False
+
+                # ── Method 1: LibreOffice (Linux / Streamlit Cloud) ──
                 try:
-                    from docx2pdf import convert
-                    pdf_path = output_path.replace(".docx", ".pdf")
-                    convert(output_path, pdf_path)
-                    st.session_state.pdf_path = pdf_path
-                except Exception as e:
-                    progress.write(f"⚠️  PDF conversion failed: {e}")
-                    st.session_state.pdf_path = None
+                    import subprocess, shutil
+                    lo_bin = shutil.which("libreoffice") or shutil.which("soffice")
+                    if lo_bin:
+                        result = subprocess.run(
+                            [
+                                lo_bin, "--headless", "--convert-to", "pdf",
+                                "--outdir", os.path.dirname(output_path),
+                                output_path,
+                            ],
+                            capture_output=True, text=True, timeout=60,
+                        )
+                        if result.returncode == 0 and os.path.exists(pdf_path):
+                            pdf_ok = True
+                            progress.write("📄  PDF created via LibreOffice.")
+                except Exception as _lo_err:
+                    progress.write(f"⚠️  LibreOffice PDF attempt: {_lo_err}")
+
+                # ── Method 2: docx2pdf (Windows / local with MS Word) ──
+                if not pdf_ok:
+                    try:
+                        from docx2pdf import convert
+                        convert(output_path, pdf_path)
+                        if os.path.exists(pdf_path):
+                            pdf_ok = True
+                            progress.write("📄  PDF created via docx2pdf.")
+                    except Exception as _d2p_err:
+                        progress.write(f"⚠️  docx2pdf PDF attempt: {_d2p_err}")
+
+                st.session_state.pdf_path = pdf_path if pdf_ok else None
+                if not pdf_ok:
+                    progress.write("⚠️  PDF conversion unavailable on this server — download the .docx file instead.")
 
                 progress.update(label="✅  Report generated successfully", state="complete")
 
