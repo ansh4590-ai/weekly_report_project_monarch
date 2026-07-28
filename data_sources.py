@@ -694,7 +694,7 @@ def get_weekly_fii_dii(prev_friday: date, curr_friday: date, expected_days: int 
         f"({days_covered}/{expected_days} trading days logged)"
     )
     return {
-        "fii": total,
+        "fii": fii_total,
         "dii": dii_total,
         "is_weekly": True,
         "days_covered": days_covered,
@@ -830,7 +830,7 @@ def _lock_file_exclusive(f) -> None:
 # NOTE: Full Nifty 50 and Bank Nifty list for accurate top gainers calculation
 NIFTY50_SAMPLE = {
     "ADANIENT": "ADANIENT.NS", "ADANIPORTS": "ADANIPORTS.NS", "APOLLOHOSP": "APOLLOHOSP.NS",
-    "ASIANPAINT": "ASIANPAINT.NS", "AXISBANK": "AXISBANK.NS", "BAJAJ-AUTO": "BAJAJ-AUTO.NS",
+    "ASIANPAINT": "ASIANPAINT.NS", "AXISBANK": "AXISBANK.NS", "BAJAJ_AUTO": "BAJAJ-AUTO.NS",
     "BAJFINANCE": "BAJFINANCE.NS", "BAJAJFINSV": "BAJAJFINSV.NS", "BEL": "BEL.NS",
     "BHARTIARTL": "BHARTIARTL.NS", "CIPLA": "CIPLA.NS", "COALINDIA": "COALINDIA.NS",
     "DRREDDY": "DRREDDY.NS", "EICHERMOT": "EICHERMOT.NS", "ETERNAL": "ETERNAL.NS",
