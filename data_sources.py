@@ -183,11 +183,25 @@ def fetch_with_fallback(display_name: str,
     for symbol in unique_candidates:
         df = fetch_yahoo_finance(symbol, start_date, end_date)
         if not df.empty:
-            # Reject severely stale YF data
-            last_dt = df.index[-1].date()
-            if (end_date - last_dt).days > 6:
-                print(f"  [WARN] {display_name}: YF data for {symbol} is stale, rejecting.")
-                continue
+            # Verify the data actually covers the report period.
+            # YF sometimes returns only pre-week rows (e.g. July 17) + today's
+            # live NaN — in that case last_dt appears recent but the actual report
+            # week is completely missing. get_close_on_date would then silently
+            # fall back to the previous week's close, producing wrong percentages.
+            try:
+                report_mask = (
+                    (df.index.date >= start_date) &
+                    (df.index.date <= end_date)
+                )
+                close_in_window = df.loc[report_mask, "Close"].dropna()
+                if close_in_window.empty:
+                    print(
+                        f"  [WARN] {display_name}: YF {symbol} has NO data in "
+                        f"report window [{start_date} → {end_date}] — rejecting."
+                    )
+                    continue
+            except Exception:
+                pass  # if the coverage check itself errors, accept the data
             return symbol, df
     # All methods failed
     if not unique_candidates and display_name not in NSELIB_MAP:

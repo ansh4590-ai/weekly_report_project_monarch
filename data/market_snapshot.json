@@ -1,0 +1,108 @@
+{
+  "week_start": "2026-07-19",
+  "week_end": "2026-07-26",
+  "indices": [
+    {
+      "name": "NIFTY 50",
+      "close": 23767.45,
+      "pct": -2.33
+    },
+    {
+      "name": "BANK NIFTY",
+      "close": 56693.5,
+      "pct": -3.12
+    },
+    {
+      "name": "FINNIFTY",
+      "close": 25909.9,
+      "pct": -3.69
+    },
+    {
+      "name": "NIFTYNEXT50",
+      "close": 71766.0,
+      "pct": -0.09
+    },
+    {
+      "name": "MIDCAP SELECT",
+      "close": 14436.05,
+      "pct": -1.9
+    },
+    {
+      "name": "SENSEX",
+      "close": 76059.77,
+      "pct": -2.68
+    },
+    {
+      "name": "VIX",
+      "close": 14.03,
+      "pct": 6.69
+    }
+  ],
+  "sectors": [
+    {
+      "name": "NIFTY AUTO",
+      "close": 27217.95,
+      "pct": 0.44
+    },
+    {
+      "name": "NIFTY FMCG",
+      "close": 49053.3,
+      "pct": 0.62
+    },
+    {
+      "name": "NIFTY IT",
+      "close": 28767.95,
+      "pct": -1.57
+    },
+    {
+      "name": "NIFTY METAL",
+      "close": 12401.55,
+      "pct": -0.28
+    },
+    {
+      "name": "NIFTYPHARM",
+      "close": 25548.15,
+      "pct": -0.38
+    },
+    {
+      "name": "NIFTY PSE",
+      "close": 9952.3,
+      "pct": 0.14
+    },
+    {
+      "name": "NIFTYPSUBANK",
+      "close": 8345.65,
+      "pct": -0.43
+    },
+    {
+      "name": "NIFTYPVTBA",
+      "close": 27277.55,
+      "pct": -4.32
+    },
+    {
+      "name": "NIFTY REALTY",
+      "close": 881.8,
+      "pct": -4.02
+    },
+    {
+      "name": "NIFTY MEDIA",
+      "close": 1527.45,
+      "pct": 0.39
+    },
+    {
+      "name": "NIFTYINDDEFENCE",
+      "close": 9354.45,
+      "pct": 0.1
+    },
+    {
+      "name": "NIFTYMIDCA",
+      "close": 61622.35,
+      "pct": -1.29
+    },
+    {
+      "name": "NIFTYSMLC",
+      "close": 18874.95,
+      "pct": -2.18
+    }
+  ]
+}
