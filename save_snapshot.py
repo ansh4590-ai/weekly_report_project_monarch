@@ -80,31 +80,105 @@ if missing_sectors:
     print(f"     Missing: {missing_sectors}")
 
 # ── Persist long-history cache for LONG_WINDOW_INDICES (EMA input series) ──
-# mkt["yf_cache"] holds whatever fetch_with_fallback actually returned for
-# each index this run. Locally, nselib reaches NSE directly, so for FINNIFTY
-# in particular this is the accurate, full-depth series — exactly what the
-# cloud deployment can't get for itself. Save it so it can.
-from config import LONG_WINDOW_INDICES
+# nselib caps a single index_data() call at ~280 rows regardless of the
+# requested date range. To get the 800+ rows an EMA-200 needs to converge,
+# we stitch together annual segments starting from 2020, dedup, sort,
+# and save the combined series. The cloud deployment then uses this cache
+# instead of ever touching the truncated live nselib series.
+from config import LONG_WINDOW_INDICES, NSELIB_MAP
+import pandas as pd
+from nselib import capital_market as _cm
+from datetime import date as _date, timedelta as _td
 
 long_history_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "long_history")
 os.makedirs(long_history_dir, exist_ok=True)
 
-print(f"\n[INFO] Saving long-history cache for {sorted(LONG_WINDOW_INDICES)} …")
-for _name in LONG_WINDOW_INDICES:
-    _df = mkt.get("yf_cache", {}).get(_name)
-    if _df is None or _df.empty:
-        print(f"     [WARN] {_name}: no data fetched this run — cache NOT updated (old cache, if any, left as-is)")
-        continue
+# Name mapping: display name -> nselib index name
+_LONG_NSELIB = {k: NSELIB_MAP[k] for k in LONG_WINDOW_INDICES if k in NSELIB_MAP}
+# For indices not in NSELIB_MAP (e.g. NIFTY 50, BANK NIFTY), use YF cache as fallback
+_LONG_YF_ONLY = {k for k in LONG_WINDOW_INDICES if k not in NSELIB_MAP}
+
+print(f"\n[INFO] Building full long-history cache for {sorted(LONG_WINDOW_INDICES)} ...")
+print(f"       (stitching annual nselib segments to overcome ~280-row API cap)")
+
+today = _date.today()
+
+for _name in sorted(LONG_WINDOW_INDICES):
     _out_csv = os.path.join(long_history_dir, f"{_name}.csv")
-    _df_out = _df.reset_index()
-    # nselib/yfinance both index by a "Date"-named DatetimeIndex, but be
-    # defensive in case that ever changes.
-    if _df_out.columns[0] != "Date":
-        _df_out = _df_out.rename(columns={_df_out.columns[0]: "Date"})
+
+    if _name in _LONG_YF_ONLY:
+        # NIFTY 50 and BANK NIFTY: YF (^NSEI / ^NSEBANK) returns full history
+        _df = mkt.get("yf_cache", {}).get(_name)
+        if _df is None or _df.empty:
+            print(f"     [WARN] {_name}: no YF data this run — cache NOT updated")
+            continue
+        _df_out = _df.reset_index()
+        if _df_out.columns[0] != "Date":
+            _df_out = _df_out.rename(columns={_df_out.columns[0]: "Date"})
+        _df_out.to_csv(_out_csv, index=False)
+        print(f"     [OK]   {_name}: {len(_df_out)} rows (YF) -> {_out_csv}")
+        continue
+
+    # nselib path: stitch quarterly segments from 2019-01-01 to today.
+    # nselib caps each call at ~70 rows per calendar year regardless of date range,
+    # so we break into 3-month windows to stay under the cap and capture every day.
+    _nse_name = _LONG_NSELIB[_name]
+    _all_chunks = []
+    _seg_start = _date(2019, 1, 1)
+
+    while _seg_start <= today:
+        # 3-month window
+        _seg_end_month = _seg_start.month + 2
+        _seg_end_year = _seg_start.year + (_seg_end_month - 1) // 12
+        _seg_end_month = ((_seg_end_month - 1) % 12) + 1
+        import calendar as _cal
+        _last_day = _cal.monthrange(_seg_end_year, _seg_end_month)[1]
+        _seg_end = min(_date(_seg_end_year, _seg_end_month, _last_day), today)
+
+        _fs = _seg_start.strftime("%d-%m-%Y")
+        _fe = _seg_end.strftime("%d-%m-%Y")
+        try:
+            _chunk = _cm.index_data(index=_nse_name, from_date=_fs, to_date=_fe)
+            if _chunk is not None and not _chunk.empty:
+                _all_chunks.append(_chunk)
+        except Exception as _exc:
+            print(f"     [WARN]  {_name} {_fs}-{_fe}: nselib error — {_exc}")
+
+        # Advance by 3 months
+        _next_month = _seg_start.month + 3
+        _next_year = _seg_start.year + (_next_month - 1) // 12
+        _next_month = ((_next_month - 1) % 12) + 1
+        _seg_start = _date(_next_year, _next_month, 1)
+
+    if not _all_chunks:
+        print(f"     [WARN] {_name}: no nselib data fetched — cache NOT updated")
+        continue
+
+    _combined = pd.concat(_all_chunks, ignore_index=True)
+    _combined["Date"] = pd.to_datetime(_combined["TIMESTAMP"], format="%d-%b-%Y")
+    _combined.set_index("Date", inplace=True)
+
+    # Dedup (keep last occurrence per date — same logic as data_sources.py)
+    _dup = int(_combined.index.duplicated().sum())
+    if _dup:
+        print(f"     [DEDUP] {_name}: removed {_dup} duplicate date(s)")
+        _combined = _combined[~_combined.index.duplicated(keep="last")]
+
+    _combined.sort_index(inplace=True)
+    _combined = _combined.rename(columns={
+        "CLOSE_INDEX_VAL": "Close",
+        "OPEN_INDEX_VAL": "Open",
+        "HIGH_INDEX_VAL": "High",
+        "LOW_INDEX_VAL": "Low",
+    })
+
+    _df_out = _combined[["Open", "High", "Low", "Close"]].reset_index()
     _df_out.to_csv(_out_csv, index=False)
-    print(f"     [OK] {_name}: {len(_df_out)} rows -> {_out_csv}")
+    _last_date = _combined.index.max().date()
+    print(f"     [OK]   {_name}: {len(_df_out)} rows, up to {_last_date} -> {_out_csv}")
 
 print(f"\n[NEXT] Commit and push:")
 print(f"     git add data/market_snapshot.json data/long_history/")
 print(f"     git commit -m \"snapshot: week ending {end_date.strftime('%d-%b-%Y')}\"")
 print(f"     git push")
+

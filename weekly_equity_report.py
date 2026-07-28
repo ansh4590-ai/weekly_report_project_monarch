@@ -198,89 +198,72 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
         if yf_has_exact:
             # YF has a proper (non-NaN) close for curr_friday — use it
             return yf_prev, yf_curr, "YF"
-        elif yf_curr_nan or is_stale_week or (df is None or df.empty):
-            # YF Close is NaN, data is too old, or YF returned no data at all.
-            # Resolution priority (most reliable to least):
-            #   1. Bhavcopy CSV (committed to git, always available on cloud)
-            #   2. nselib historical API (requires Indian IP)
-            #   3. NSE live snapshot (requires Indian IP)
+        
+        # YF Close for exact Friday is missing (row missing or NaN).
+        # Resolution priority (most reliable to least):
+        #   1. Bhavcopy CSV (committed to git, always available on cloud)
+        #   2. nselib historical API (requires Indian IP)
+        #   3. Snapshot (period-correct fallback)
+        #   4. YF Stale (e.g. Thursday's data, better than random future NSE live)
+        #   5. NSE live snapshot (last resort, live today's price)
 
-            # Priority 1: Bhavcopy — works on all environments including Streamlit Cloud
-            bhav_close = get_close_from_bhavcopy(curr_friday_actual, disp_name)
-            if bhav_close is not None:
-                # Also get prev_close from bhavcopy when YF is unavailable.
-                # (yf_prev is None when df is empty, breaking the weekly % calc)
-                bhav_prev = get_close_from_bhavcopy(prev_friday_actual, disp_name)
-                effective_prev = bhav_prev if bhav_prev is not None else yf_prev
-                return effective_prev, bhav_close, "Bhavcopy"
+        # Priority 1: Bhavcopy — works on all environments including Streamlit Cloud
+        bhav_close = get_close_from_bhavcopy(curr_friday_actual, disp_name)
+        if bhav_close is not None:
+            # Also get prev_close from bhavcopy when YF is unavailable.
+            bhav_prev = get_close_from_bhavcopy(prev_friday_actual, disp_name)
+            effective_prev = bhav_prev if bhav_prev is not None else yf_prev
+            return effective_prev, bhav_close, "Bhavcopy"
 
-            # Priority 2: nselib historical API (may fail on cloud)
-            historical_close = None
-            if disp_name in NSELIB_MAP:
+        # Priority 2: nselib historical API (may fail on cloud)
+        historical_close = None
+        if disp_name in NSELIB_MAP:
+            try:
+                from nselib import capital_market
+                nse_name = NSELIB_MAP[disp_name]
+                from_str = (curr_friday_actual - timedelta(days=1)).strftime("%d-%m-%Y")
+                to_str = (curr_friday_actual + timedelta(days=1)).strftime("%d-%m-%Y")
+                hist_df = capital_market.index_data(nse_name, from_str, to_str)
+                if hist_df is not None and not hist_df.empty:
+                    hist_df["Date"] = pd.to_datetime(hist_df["TIMESTAMP"], format="%d-%b-%Y")
+                    match = hist_df[hist_df["Date"] == pd.Timestamp(curr_friday_actual)]
+                    if not match.empty:
+                        historical_close = float(match.iloc[0]["CLOSE_INDEX_VAL"])
+            except Exception:
+                pass
+
+        if historical_close is not None:
+            return yf_prev, historical_close, "NSE_Historical"
+
+        # Priority 3: committed weekly snapshot (period-correct, always
+        # available once save_snapshot.py has been run+committed for this week).
+        _snap_entry = _snapshot_indices.get(disp_name) or _snapshot_sectors.get(disp_name)
+        if _snap_entry and _snap_entry.get("close") is not None:
+            snap_close = _snap_entry["close"]
+            snap_prev = None
+            snap_pct = _snap_entry.get("pct")
+            if snap_pct is not None and snap_pct != -100:
                 try:
-                    from nselib import capital_market
-                    nse_name = NSELIB_MAP[disp_name]
-                    from_str = (curr_friday_actual - timedelta(days=1)).strftime("%d-%m-%Y")
-                    to_str = (curr_friday_actual + timedelta(days=1)).strftime("%d-%m-%Y")
-                    hist_df = capital_market.index_data(nse_name, from_str, to_str)
-                    if hist_df is not None and not hist_df.empty:
-                        hist_df["Date"] = pd.to_datetime(hist_df["TIMESTAMP"], format="%d-%b-%Y")
-                        match = hist_df[hist_df["Date"] == pd.Timestamp(curr_friday_actual)]
-                        if not match.empty:
-                            historical_close = float(match.iloc[0]["CLOSE_INDEX_VAL"])
-                except Exception:
-                    pass
+                    snap_prev = snap_close / (1 + snap_pct / 100)
+                except ZeroDivisionError:
+                    snap_prev = None
+            effective_prev = snap_prev if snap_prev is not None else yf_prev
+            return effective_prev, snap_close, "Snapshot"
 
-            if historical_close is not None:
-                return yf_prev, historical_close, "NSE_Historical"
-
-            # Priority 3: committed weekly snapshot (period-correct, always
-            # available once save_snapshot.py has been run+committed for
-            # this week). Tried BEFORE the live snapshot because nse_live is
-            # TODAY's price, not last Friday's close — it would be silently
-            # substituted on cloud runs where bhavcopy/nselib both fail.
-            _snap_entry = _snapshot_indices.get(disp_name) or _snapshot_sectors.get(disp_name)
-            if _snap_entry and _snap_entry.get("close") is not None:
-                snap_close = _snap_entry["close"]
-                snap_prev = None
-                snap_pct = _snap_entry.get("pct")
-                if snap_pct is not None and snap_pct != -100:
-                    try:
-                        snap_prev = snap_close / (1 + snap_pct / 100)
-                    except ZeroDivisionError:
-                        snap_prev = None
-                effective_prev = snap_prev if snap_prev is not None else yf_prev
-                return effective_prev, snap_close, "Snapshot"
-
-            # Priority 4: NSE live snapshot (last resort — TODAY's price,
-            # not necessarily the report week's Friday close)
-            if nse_live is not None:
-                return yf_prev, nse_live, "NSE_Fallback_Live"
-
-            # If all fallbacks fail, DO NOT throw away yf_curr if we have it!
-            # (If YF gave us Thursday's price, use it instead of blanking out SENSEX)
-            if yf_curr is not None:
-                return yf_prev, yf_curr, "YF_Stale_Fallback_Failed"
-
-            return yf_prev, None, "YF_Stale_Week"
-        elif nse_live is not None:
-            # YF date is missing entirely. Prefer the committed weekly
-            # snapshot (period-correct) over live-today data if available.
-            _snap_entry = _snapshot_indices.get(disp_name) or _snapshot_sectors.get(disp_name)
-            if _snap_entry and _snap_entry.get("close") is not None:
-                snap_close = _snap_entry["close"]
-                snap_pct = _snap_entry.get("pct")
-                snap_prev = None
-                if snap_pct is not None and snap_pct != -100:
-                    try:
-                        snap_prev = snap_close / (1 + snap_pct / 100)
-                    except ZeroDivisionError:
-                        snap_prev = None
-                return (snap_prev if snap_prev is not None else yf_prev), snap_close, "Snapshot"
-            return yf_prev, nse_live, "NSE_Fallback_Live"
-        else:
-            # Best-effort: use whatever YF returned
+        # Priority 4: Best-effort YF stale data in the current report week (e.g. Thursday's close)
+        if yf_curr is not None and not is_stale_week:
             return yf_prev, yf_curr, "YF_Stale"
+
+        # Priority 5: NSE live snapshot (last resort — TODAY's price,
+        # not necessarily the report week's Friday close)
+        if nse_live is not None:
+            return yf_prev, nse_live, "NSE_Fallback_Live"
+
+        # Extreme fallback: YF stale data from before this week
+        if yf_curr is not None:
+            return yf_prev, yf_curr, "YF_Stale_Fallback_Failed"
+
+        return yf_prev, None, "YF_Stale_Week"
 
     # Build indices data
     print("\n" + "-" * 70)

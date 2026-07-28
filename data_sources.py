@@ -206,6 +206,20 @@ def fetch_with_fallback(display_name: str,
             if df_nse is not None and not df_nse.empty:
                 df_nse["Date"] = pd.to_datetime(df_nse["TIMESTAMP"], format="%d-%b-%Y")
                 df_nse.set_index("Date", inplace=True)
+
+                # De-duplicate: nselib's bulk index-history call has been
+                # observed to return overlapping rows for the same date when
+                # queried across a wide range (like the ~1200-day EMA lookback
+                # here). A duplicated day inflates its weight in the EMA
+                # recursion — this shows up almost entirely in short-span
+                # EMAs (9/21-day), since long-span EMAs are dominated by
+                # years of other data and barely notice it.
+                dup_count = int(df_nse.index.duplicated().sum())
+                if dup_count:
+                    print(f"  [WARN] {display_name}: nselib returned {dup_count} duplicate date(s) — "
+                          f"dropping duplicates (keeping last).")
+                    df_nse = df_nse[~df_nse.index.duplicated(keep="last")]
+
                 df_nse.sort_index(inplace=True)
                 df_nse = df_nse.rename(columns={
                     "CLOSE_INDEX_VAL": "Close",
@@ -215,6 +229,21 @@ def fetch_with_fallback(display_name: str,
                 })
                 for col in ["Close", "Open", "High", "Low"]:
                     df_nse[col] = pd.to_numeric(df_nse[col], errors="coerce")
+
+                # Gap check: flag if the most recent stretch has an unusually
+                # large jump between consecutive trading rows (a real market
+                # holiday run is at most ~4 calendar days; anything bigger in
+                # the last ~30 rows suggests missing data, which would
+                # silently distort the short EMAs the same way duplicates do).
+                if len(df_nse) >= 2:
+                    recent = df_nse.tail(30)
+                    gaps = recent.index.to_series().diff().dt.days.dropna()
+                    if not gaps.empty and gaps.max() > 5:
+                        bad_idx = gaps.idxmax()
+                        print(f"  [WARN] {display_name}: unusually large gap ({int(gaps.max())} days) "
+                              f"in nselib data ending {bad_idx.date()} — recent EMAs (9/21-day) may be "
+                              f"affected. Check nselib's raw output for missing trading days.")
+
                 return f"nselib:{nse_index_name}", df_nse
 
         except concurrent.futures.TimeoutError:
