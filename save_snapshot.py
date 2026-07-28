@@ -42,11 +42,17 @@ print(f"[INFO] Fetching data for {start_date} → {end_date} …")
 mkt = fetch_all_market_data(start_date, end_date)
 
 # ── Build snapshot dict ───────────────────────────────────────────────────────
+from data_sources import fetch_global_markets
+
+prev_fri_tgt, curr_fri_tgt = mkt["target_fridays"]
+global_mkts = fetch_global_markets(prev_fri_tgt, curr_fri_tgt)
+
 snapshot = {
     "week_start": start_date.isoformat(),
     "week_end":   end_date.isoformat(),
     "indices":    mkt["indices"],
     "sectors":    mkt["sectors"],
+    "global_mkts": global_mkts,
 }
 
 # ── Save ──────────────────────────────────────────────────────────────────────

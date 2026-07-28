@@ -14,8 +14,8 @@
     },
     {
       "name": "FINNIFTY",
-      "close": 25909.9,
-      "pct": -3.69
+      "close": 26127.35,
+      "pct": -2.88
     },
     {
       "name": "NIFTYNEXT50",
@@ -104,5 +104,9 @@
       "close": 18874.95,
       "pct": -2.18
     }
-  ]
+  ],
+  "global_mkts": {
+    "djia": -0.38,
+    "stoxx": 0.46
+  }
 }

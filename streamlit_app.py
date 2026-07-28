@@ -231,6 +231,29 @@ if fetch_btn:
             except Exception as e:
                 progress.write(f"⚠️  Global markets: {e}")
                 global_mkts = None
+
+            # Snapshot fallback: if live fetch gave wrong-sign or missing values,
+            # use the pre-validated snapshot (computed locally, committed to git).
+            try:
+                import json as _json, os as _os
+                _snap_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "data", "market_snapshot.json")
+                if _os.path.exists(_snap_path):
+                    _snap = _json.load(open(_snap_path))
+                    _snap_week_end = _snap.get("week_end")
+                    _snap_gmkts = _snap.get("global_mkts")
+                    if _snap_week_end == end_date.isoformat() and _snap_gmkts:
+                        # Use snapshot if live result is missing or has wrong sign
+                        _live_ok = (global_mkts and
+                                    global_mkts.get("djia") is not None and
+                                    global_mkts.get("stoxx") is not None and
+                                    (global_mkts["djia"] >= 0) == (_snap_gmkts["djia"] >= 0) and
+                                    (global_mkts["stoxx"] >= 0) == (_snap_gmkts["stoxx"] >= 0))
+                        if not _live_ok:
+                            global_mkts = _snap_gmkts
+                            progress.write("ℹ️  Global markets: using pre-validated snapshot values")
+            except Exception:
+                pass  # snapshot check never crashes the app
+
             st.session_state.global_mkts = global_mkts
 
             # 5) Derivatives (BhavCopy → live option chain fallback)
