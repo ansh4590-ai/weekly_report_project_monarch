@@ -186,7 +186,17 @@ def fetch_with_fallback(display_name: str,
         import concurrent.futures
 
         nse_index_name = NSELIB_MAP[display_name]
-        from_str = start_date.strftime("%d-%m-%Y")
+        
+        # If a long history is requested (e.g. 1200 days for EMA), nselib will
+        # silently truncate the result or fail. We only need the live recent days
+        # (to get the current week's intermediate closes), and we will stitch this
+        # onto the pre-computed long_history cache.
+        actual_from = start_date
+        if (end_date - start_date).days > 365:
+            from datetime import timedelta
+            actual_from = end_date - timedelta(days=30)
+
+        from_str = actual_from.strftime("%d-%m-%Y")
         to_str = end_date.strftime("%d-%m-%Y")
 
         def _nselib_fetch():
@@ -207,20 +217,6 @@ def fetch_with_fallback(display_name: str,
                 df_nse["Date"] = pd.to_datetime(df_nse["TIMESTAMP"], format="%d-%b-%Y")
                 df_nse.set_index("Date", inplace=True)
 
-                # De-duplicate: nselib's bulk index-history call has been
-                # observed to return overlapping rows for the same date when
-                # queried across a wide range (like the ~1200-day EMA lookback
-                # here). A duplicated day inflates its weight in the EMA
-                # recursion — this shows up almost entirely in short-span
-                # EMAs (9/21-day), since long-span EMAs are dominated by
-                # years of other data and barely notice it.
-                dup_count = int(df_nse.index.duplicated().sum())
-                if dup_count:
-                    print(f"  [WARN] {display_name}: nselib returned {dup_count} duplicate date(s) — "
-                          f"dropping duplicates (keeping last).")
-                    df_nse = df_nse[~df_nse.index.duplicated(keep="last")]
-
-                df_nse.sort_index(inplace=True)
                 df_nse = df_nse.rename(columns={
                     "CLOSE_INDEX_VAL": "Close",
                     "OPEN_INDEX_VAL": "Open",
@@ -229,20 +225,31 @@ def fetch_with_fallback(display_name: str,
                 })
                 for col in ["Close", "Open", "High", "Low"]:
                     df_nse[col] = pd.to_numeric(df_nse[col], errors="coerce")
+                    
+                # Stitch the live recent data onto the full long_history cache.
+                # This guarantees we have the full 1200+ days for EMA convergence,
+                # plus the live days of the current week from nselib.
+                cached = load_long_history_cache(display_name)
+                if not cached.empty:
+                    df_nse = pd.concat([cached, df_nse])
+
+                dup_count = int(df_nse.index.duplicated().sum())
+                if dup_count:
+                    print(f"  [WARN] {display_name}: nselib returned {dup_count} duplicate date(s) — "
+                          f"dropping duplicates (keeping last).")
+                    df_nse = df_nse[~df_nse.index.duplicated(keep="last")]
+
+                df_nse.sort_index(inplace=True)
 
                 # Gap check: flag if the most recent stretch has an unusually
-                # large jump between consecutive trading rows (a real market
-                # holiday run is at most ~4 calendar days; anything bigger in
-                # the last ~30 rows suggests missing data, which would
-                # silently distort the short EMAs the same way duplicates do).
+                # large jump between consecutive trading rows.
                 if len(df_nse) >= 2:
                     recent = df_nse.tail(30)
                     gaps = recent.index.to_series().diff().dt.days.dropna()
                     if not gaps.empty and gaps.max() > 5:
                         bad_idx = gaps.idxmax()
                         print(f"  [WARN] {display_name}: unusually large gap ({int(gaps.max())} days) "
-                              f"in nselib data ending {bad_idx.date()} — recent EMAs (9/21-day) may be "
-                              f"affected. Check nselib's raw output for missing trading days.")
+                              f"in data ending {bad_idx.date()} — recent EMAs (9/21-day) may be affected.")
 
                 return f"nselib:{nse_index_name}", df_nse
 
