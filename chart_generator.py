@@ -267,23 +267,20 @@ def generate_candlestick_chart(weekly_df: pd.DataFrame,
         is_bullish = last_row['Close'] >= last_row['Open']
         label_bg_color = TV_GREEN if is_bullish else TV_RED
 
-        # Light dotted cyan/gray line across the chart (like TradingView)
-        ax.axhline(y=current_close, color='#B2B5BE',
-                    linewidth=0.6, linestyle='--', alpha=0.6, zorder=4)
+        # Dotted line matching the label color across the chart
+        ax.axhline(y=current_close, color=label_bg_color,
+                    linewidth=0.8, linestyle=':', alpha=0.8, zorder=4)
         
         # Price label on the right edge — colored badge based on trend
         price_text = _format_price(current_close)
         
-        # Short connecting line from chart edge to label
-        ax.plot([n - 0.3, n + 0.2], [current_close, current_close],
-                color=label_bg_color, linewidth=0.8, zorder=5,
-                clip_on=False)
-        
-        # Draw label as colored box at right edge
+        # Draw label as colored box at right edge (using axes fraction for x so it sticks to the right spine)
         ax.annotate(
             price_text,
-            xy=(n + 0.3, current_close),
-            xycoords='data',
+            xy=(1.0, current_close),
+            xycoords=('axes fraction', 'data'),
+            xytext=(3, 0),  # slight padding to the right of the spine
+            textcoords='offset points',
             fontsize=6.5,
             color=TV_PRICE_LABEL_TEXT,
             fontweight='bold',
@@ -308,7 +305,8 @@ def generate_candlestick_chart(weekly_df: pd.DataFrame,
     y_padding = price_range * 0.02
     
     ax.set_ylim(all_lows.min() - y_padding, all_highs.max() + y_padding)
-    ax.set_xlim(-0.8, n + 0.5)
+    # Add empty space for future candles on the right side
+    ax.set_xlim(-0.8, n + 4.0)
     
     # ─── Remove X-axis (no date labels like TradingView zoomed view) ───
     ax.set_xticks([])
@@ -555,7 +553,7 @@ def generate_technical_commentary(index_name: str,
     if pattern_type == 'bullish':
         outlook = "positive"
     elif pattern_type == 'bearish':
-        outlook = "negative"
+        outlook = "volatile"
     else:
         outlook = "volatile"
     
