@@ -75,6 +75,36 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
     nse_session = create_nse_session()
     nse_snap = fetch_nse_snapshot(nse_session)
 
+    # Committed weekly snapshot (pre-computed locally via save_snapshot.py,
+    # checked into git) — used as a period-correct fallback on Streamlit
+    # Cloud, where bhavcopy/nselib are often unavailable. Only used when its
+    # week_start/week_end matches the week actually being requested.
+    #
+    # This matters for indices as much as sectors: without it, _resolve_close's
+    # last resort is nse_snap above, which is TODAY's live index level, not
+    # the requested week's Friday close — silently substituting today's price
+    # for last Friday's on cloud runs where bhavcopy/nselib both fail.
+    _snapshot_indices: dict = {}
+    _snapshot_sectors: dict = {}
+    _snapshot_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "market_snapshot.json")
+    if os.path.exists(_snapshot_path):
+        try:
+            import json as _json
+            with open(_snapshot_path, "r") as _f:
+                _snap = _json.load(_f)
+            if _snap.get("week_start") == start_date.isoformat() and _snap.get("week_end") == end_date.isoformat():
+                for _s in _snap.get("indices", []):
+                    _snapshot_indices[_s["name"]] = _s
+                for _s in _snap.get("sectors", []):
+                    _snapshot_sectors[_s["name"]] = _s
+                print(f"  [INFO] market_snapshot.json loaded for {start_date} \u2192 {end_date} "
+                      f"({len(_snapshot_indices)} indices, {len(_snapshot_sectors)} sectors cached)")
+            else:
+                print(f"  [INFO] market_snapshot.json exists but is for a different week "
+                      f"({_snap.get('week_start')} \u2192 {_snap.get('week_end')}) \u2014 skipping")
+        except Exception as _e:
+            print(f"  [WARN] Could not load market_snapshot.json: {_e}")
+
     # Yahoo Finance historical data
     print("\n[2/3] Downloading Yahoo Finance historical data...")
     yf_cache = {}
@@ -204,7 +234,26 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
             if historical_close is not None:
                 return yf_prev, historical_close, "NSE_Historical"
 
-            # Priority 3: NSE live snapshot (may fail on cloud)
+            # Priority 3: committed weekly snapshot (period-correct, always
+            # available once save_snapshot.py has been run+committed for
+            # this week). Tried BEFORE the live snapshot because nse_live is
+            # TODAY's price, not last Friday's close — it would be silently
+            # substituted on cloud runs where bhavcopy/nselib both fail.
+            _snap_entry = _snapshot_indices.get(disp_name) or _snapshot_sectors.get(disp_name)
+            if _snap_entry and _snap_entry.get("close") is not None:
+                snap_close = _snap_entry["close"]
+                snap_prev = None
+                snap_pct = _snap_entry.get("pct")
+                if snap_pct is not None and snap_pct != -100:
+                    try:
+                        snap_prev = snap_close / (1 + snap_pct / 100)
+                    except ZeroDivisionError:
+                        snap_prev = None
+                effective_prev = snap_prev if snap_prev is not None else yf_prev
+                return effective_prev, snap_close, "Snapshot"
+
+            # Priority 4: NSE live snapshot (last resort — TODAY's price,
+            # not necessarily the report week's Friday close)
             if nse_live is not None:
                 return yf_prev, nse_live, "NSE_Fallback_Live"
 
@@ -215,7 +264,19 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
 
             return yf_prev, None, "YF_Stale_Week"
         elif nse_live is not None:
-            # YF date is missing entirely — fall back to NSE live
+            # YF date is missing entirely. Prefer the committed weekly
+            # snapshot (period-correct) over live-today data if available.
+            _snap_entry = _snapshot_indices.get(disp_name) or _snapshot_sectors.get(disp_name)
+            if _snap_entry and _snap_entry.get("close") is not None:
+                snap_close = _snap_entry["close"]
+                snap_pct = _snap_entry.get("pct")
+                snap_prev = None
+                if snap_pct is not None and snap_pct != -100:
+                    try:
+                        snap_prev = snap_close / (1 + snap_pct / 100)
+                    except ZeroDivisionError:
+                        snap_prev = None
+                return (snap_prev if snap_prev is not None else yf_prev), snap_close, "Snapshot"
             return yf_prev, nse_live, "NSE_Fallback_Live"
         else:
             # Best-effort: use whatever YF returned
@@ -258,24 +319,6 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
     data_quality["sectors_ok"] = 0
     data_quality["sectors_total"] = len(SECTOR_NAMES)
 
-    # Load market snapshot (pre-computed locally, committed to git) for cloud fallback
-    _snapshot_cache = {}
-    _snapshot_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "market_snapshot.json")
-    if os.path.exists(_snapshot_path):
-        try:
-            import json as _json
-            with open(_snapshot_path, "r") as _f:
-                _snap = _json.load(_f)
-            if _snap.get("week_start") == start_date.isoformat() and _snap.get("week_end") == end_date.isoformat():
-                for _s in _snap.get("sectors", []):
-                    _snapshot_cache[_s["name"]] = _s
-                print(f"  [INFO] market_snapshot.json loaded for {start_date} → {end_date} ({len(_snapshot_cache)} sectors cached)")
-            else:
-                print(f"  [INFO] market_snapshot.json exists but is for a different week "
-                      f"({_snap.get('week_start')} → {_snap.get('week_end')}) — skipping")
-        except Exception as _e:
-            print(f"  [WARN] Could not load market_snapshot.json: {_e}")
-
     for disp_name in SECTOR_NAMES:
         df = yf_cache.get(disp_name)
         yf_prev, curr_close, src = _resolve_close(disp_name, df)
@@ -287,8 +330,8 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
             weekly_pct = None
             src = "incomplete"
             # Cloud fallback: try pre-computed snapshot
-            if disp_name in _snapshot_cache:
-                snap_entry = _snapshot_cache[disp_name]
+            if disp_name in _snapshot_sectors:
+                snap_entry = _snapshot_sectors[disp_name]
                 weekly_pct = snap_entry.get("pct")
                 curr_close = snap_entry.get("close")
                 src = "snapshot"
@@ -299,6 +342,7 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
         close_rounded = round2(curr_close)
         print(f"  {disp_name:20s}: close={close_rounded}  weekly%={weekly_pct}  [{src}]")
         sectors.append({"name": disp_name, "close": close_rounded, "pct": weekly_pct})
+
 
     # Build EMA data
     print("\n" + "-" * 70)
