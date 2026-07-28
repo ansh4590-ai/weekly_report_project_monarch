@@ -22,6 +22,11 @@ from math_utils import round2
 
 warnings.filterwarnings("ignore")
 
+# ── Committed long-history cache dir (see load_long_history_cache below) ──
+LONG_HISTORY_CACHE_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "long_history"
+)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # YAHOO FINANCE
@@ -115,6 +120,50 @@ def fetch_yahoo_finance(symbol: str,
     return pd.DataFrame()
 
 
+def load_long_history_cache(display_name: str) -> pd.DataFrame:
+    """
+    Load a pre-fetched, git-committed long-history OHLC series for `display_name`.
+
+    Why this exists
+    ----------------
+    nselib (the accurate primary source used for LONG_WINDOW_INDICES like
+    FINNIFTY — see fetch_with_fallback) is blocked on Streamlit Cloud, so it
+    times out there and the code falls through to Yahoo Finance. The problem:
+    the YF fallback tickers for some indices (e.g. FINNIFTY's
+    "NIFTY_FIN_SERVICE.NS" / "^CNXFIN") don't reliably return the full
+    ~830-trading-day depth an EMA-200 needs — yfinance just silently hands
+    back a shorter series instead of raising an error, so nothing "fails"
+    and no warning fires, but every EMA computed from that series
+    (9/21/50/100/200) comes out different — the longer windows worst of all,
+    since they never converge. That's exactly why a report generated on the
+    website can come out with correct NIFTY/BANK NIFTY EMAs (their YF
+    tickers ^NSEI/^NSEBANK have full depth) but wrong FINNIFTY EMAs, while
+    the same code run locally (where nselib reaches NSE directly) is correct
+    for all three.
+
+    This cache is the fix: a copy of the same accurate nselib series,
+    refreshed weekly by save_snapshot.py (run locally, where nselib works)
+    and committed to git, so the cloud deployment can use it instead of
+    ever touching the incomplete YF series.
+
+    Returns an empty DataFrame if no cache file exists yet for this name.
+    """
+    path = os.path.join(LONG_HISTORY_CACHE_DIR, f"{display_name}.csv")
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(path, parse_dates=["Date"])
+        df.set_index("Date", inplace=True)
+        df.sort_index(inplace=True)
+        for col in ["Close", "Open", "High", "Low"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        return df
+    except Exception as e:
+        print(f"  [WARN] {display_name}: could not read long-history cache: {e}")
+        return pd.DataFrame()
+
+
 def fetch_with_fallback(display_name: str,
                         start_date: date,
                         end_date: date) -> Tuple[Optional[str], pd.DataFrame]:
@@ -169,9 +218,24 @@ def fetch_with_fallback(display_name: str,
                 return f"nselib:{nse_index_name}", df_nse
 
         except concurrent.futures.TimeoutError:
-            print(f"  [WARN] {display_name}: nselib timed out — NSE likely unreachable (cloud). Falling back to YF.")
+            print(f"  [WARN] {display_name}: nselib timed out — NSE likely unreachable (cloud). "
+                  f"Trying committed long-history cache before YF.")
         except Exception as e:
-            print(f"  [WARN] {display_name}: nselib failed: {e}")
+            print(f"  [WARN] {display_name}: nselib failed: {e}. "
+                  f"Trying committed long-history cache before YF.")
+
+        # 1b. Committed long-history cache (accurate nselib data, snapshotted
+        #     locally and checked into git — see load_long_history_cache).
+        #     Only reached when live nselib above didn't already return.
+        #     Keep the full cached series (not trimmed to start/end) since
+        #     the EMA calculation needs the long lookback, not just the
+        #     report week.
+        cached = load_long_history_cache(display_name)
+        if not cached.empty:
+            print(f"  [OK] {display_name}: using committed long-history cache ({len(cached)} rows)")
+            return f"cache:{nse_index_name}", cached
+        else:
+            print(f"  [INFO] {display_name}: no long-history cache file found. Falling back to YF.")
 
     # 2. Try Yahoo Finance fallback
     candidates = YF_SYMBOLS.get(display_name, [])
@@ -630,7 +694,7 @@ def get_weekly_fii_dii(prev_friday: date, curr_friday: date, expected_days: int 
         f"({days_covered}/{expected_days} trading days logged)"
     )
     return {
-        "fii": fii_total,
+        "fii": total,
         "dii": dii_total,
         "is_weekly": True,
         "days_covered": days_covered,
