@@ -241,10 +241,10 @@ CONTACT_TABLE_ROW1_HEIGHT = 310  # dxa
 
 RESEARCH_TEAM = [
     {
-        "name": "Ansh Maheshwari",
-        "designation": "Intern",
-        "email": "anshmaheshwari2290@gmail.com",
-        "phone": "-",
+        "name": "Ketan Kaushik",
+        "designation": "Derivative Analyst",
+        "email": "ketan.kaushik@mnclgroup.com",
+        "phone": "0141-4007235",
     }
 ]
 
