@@ -1781,9 +1781,14 @@ def fill_docx_document(mkt_data, fii_dii, narrative, start_date, end_date,
             # Use template's header (preserves gradient images) as base
             base = tmpl_files.get(fname, files_out[fname])
             txt = base.decode('utf-8')
+            
+            # Strip Word field codes so LibreOffice/Word doesn't auto-update the DATE field to "today"
+            txt = re.sub(r'<w:fldChar[^>]*>', '', txt)
+            txt = re.sub(r'<w:instrText[^>]*>.*?</w:instrText>', '', txt)
+            
             patched = re.sub(month_pat, header_date_str, txt)
             if patched != txt:
-                print(f"  [OK] Date patched in {fname}")
+                print(f"  [OK] Date patched and field codes removed in {fname}")
             files_out[fname] = patched.encode('utf-8')
 
     # Also restore any media referenced by headers (e.g. gradient image, logo)
