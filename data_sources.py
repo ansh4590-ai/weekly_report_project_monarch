@@ -623,6 +623,31 @@ def fetch_fii_dii(start_date: date, end_date: date) -> Dict[str, Any]:
 
 FII_DII_LOG_FILENAME = "fii_dii_history.csv"
 
+# NSE publishes final FII/DII figures after 6:30 PM IST.
+# Fetching before that time returns intraday / provisional figures
+# that may differ significantly from the official end-of-day data.
+NSE_FII_DII_RELEASE_HOUR_IST   = 18
+NSE_FII_DII_RELEASE_MINUTE_IST = 30
+
+
+def _is_after_nse_release_time() -> bool:
+    """
+    Return True if the current IST clock time is at or after 6:30 PM.
+
+    IST = UTC + 05:30.  We use datetime.utcnow() so the result is
+    correct even on machines that are not set to the IST timezone.
+    """
+    from datetime import datetime, timezone, timedelta
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(IST)
+    release = now_ist.replace(
+        hour=NSE_FII_DII_RELEASE_HOUR_IST,
+        minute=NSE_FII_DII_RELEASE_MINUTE_IST,
+        second=0,
+        microsecond=0,
+    )
+    return now_ist >= release
+
 
 def _fii_dii_log_path() -> str:
     """Return the absolute path to the FII/DII history CSV file."""
@@ -662,13 +687,23 @@ def log_daily_fii_dii(snapshot: Dict[str, Any]) -> None:
 def get_fii_dii_for_date(target_date: date) -> Dict[str, Any]:
     """
     Return FII/DII for a single date.
-    - If target_date is today: scrapes live from NSE and saves to cache.
+    - If target_date is today AND it is after 6:30 PM IST: scrapes live
+      from NSE and saves to cache.
+    - If it is before 6:30 PM IST for today: skips the live scrape to
+      avoid caching provisional/intraday figures.
     - Otherwise: reads from the history CSV cache.
     """
     today = date.today()
 
-    # Live scrape for today
+    # Live scrape for today — only after NSE releases official figures
     if target_date == today:
+        if not _is_after_nse_release_time():
+            print(
+                "  [SKIP] FII/DII live fetch skipped — NSE has not yet released "
+                "today's official figures (available after 6:30 PM IST)."
+            )
+            return {"fii": None, "dii": None, "source": "too_early", "data_date": today}
+
         snapshot = fetch_fii_dii(today, today)
         if snapshot.get("fii") is not None:
             log_daily_fii_dii(snapshot)
@@ -799,16 +834,21 @@ def get_fii_dii_data(start_date: date, end_date: date) -> pd.DataFrame:
             rows.append({"date": day, "fii": cache[iso]["fii"],
                          "dii": cache[iso]["dii"], "status": "cached"})
         elif day == today:
-            # Attempt live scrape
-            scraped = _scrape_nse_fiidii_direct()
-            if scraped is not None and scraped.get("fii") is not None:
-                # Write to cache with file lock
-                _write_to_cache(path, iso, scraped["fii"], scraped["dii"])
-                rows.append({"date": day, "fii": scraped["fii"],
-                             "dii": scraped["dii"], "status": "live"})
-            else:
+            # Only attempt a live scrape after 6:30 PM IST when NSE
+            # has published the official end-of-day FII/DII figures.
+            if not _is_after_nse_release_time():
                 rows.append({"date": day, "fii": float("nan"),
-                             "dii": float("nan"), "status": "missing"})
+                             "dii": float("nan"), "status": "too_early"})
+            else:
+                scraped = _scrape_nse_fiidii_direct()
+                if scraped is not None and scraped.get("fii") is not None:
+                    # Write to cache with file lock
+                    _write_to_cache(path, iso, scraped["fii"], scraped["dii"])
+                    rows.append({"date": day, "fii": scraped["fii"],
+                                 "dii": scraped["dii"], "status": "live"})
+                else:
+                    rows.append({"date": day, "fii": float("nan"),
+                                 "dii": float("nan"), "status": "missing"})
         else:
             rows.append({"date": day, "fii": float("nan"),
                          "dii": float("nan"), "status": "missing"})

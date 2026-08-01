@@ -292,11 +292,22 @@ if st.session_state.fii_dii_daily is not None:
             df_display[col] = df_display[col].apply(
                 lambda v: "—" if pd.isna(v) else f"{int(v):,} Cr"
             )
+
+        # Show contextual warning if any row was skipped due to early time
+        if "too_early" in st.session_state.fii_dii_daily["status"].values:
+            st.warning(
+                "⏰ **Today's FII/DII data is not yet available.** "
+                "NSE publishes official figures after **6:30 PM IST**. "
+                "Please re-run the fetch after that time to capture today's data.",
+                icon="⏰",
+            )
+
         st.dataframe(df_display, hide_index=True, use_container_width=True)
         st.caption(
             "**cached** = read from fii_dii_history.csv · "
             "**live** = scraped from NSE just now & saved · "
             "**missing** = not cached and not today (can't auto-fetch retroactively) · "
+            "**too_early** = before 6:30 PM IST, NSE data not yet published · "
             "**weekend** = markets closed"
         )
 

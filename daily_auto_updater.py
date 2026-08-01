@@ -11,8 +11,8 @@ complete week without anyone having manually fetched data Mon-Thu.
 
 import sys
 import traceback
-from datetime import date
-from data_sources import get_fii_dii_for_date
+from datetime import date, datetime, timezone, timedelta
+from data_sources import get_fii_dii_for_date, _is_after_nse_release_time
 
 
 def main():
@@ -21,12 +21,24 @@ def main():
     print("=======================================")
     try:
         today = date.today()
-        print(f"Checking {today.isoformat()}...")
+        IST = timezone(timedelta(hours=5, minutes=30))
+        now_ist = datetime.now(IST)
+        print(f"Checking {today.isoformat()} at {now_ist.strftime('%H:%M')} IST...")
 
         if today.weekday() >= 5:
             print("\n[SKIP] Weekend — markets closed, nothing to fetch.")
             return
-        
+
+        # NSE only releases final FII/DII figures after 6:30 PM IST.
+        # Running before that time would cache provisional/intraday values.
+        if not _is_after_nse_release_time():
+            print(
+                f"\n[SKIP] Current IST time is {now_ist.strftime('%H:%M')} — "
+                "NSE has not yet released today's official FII/DII figures.\n"
+                "Please run this script after 6:30 PM IST."
+            )
+            return
+
         # This function automatically scrapes the live NSE data if the target date is today,
         # and saves it into fii_dii_history.csv
         result = get_fii_dii_for_date(today)
@@ -62,7 +74,8 @@ if __name__ == "__main__":
 # 1. Open Task Scheduler → Create Task
 # 2. General tab: name it "FII DII Daily Updater", check "Run whether user
 #    is logged on or not"
-# 3. Triggers tab: New → Daily, start time 18:00, recur every 1 day.
+# 3. Triggers tab: New → Daily, start time 19:00 (IST), recur every 1 day.
+#    NSE publishes final FII/DII data after 18:30 IST, so 19:00 is safe.
 #    (It will still fire on weekends — the script itself checks and skips
 #    them, so that's fine.)
 # 4. Actions tab: New → Program/script:
@@ -79,7 +92,8 @@ if __name__ == "__main__":
 # ── macOS / Linux (cron) ──────────────────────────────────────────────────
 # Run: crontab -e
 # Add this line (adjust paths):
-#   0 18 * * 1-5 cd /path/to/equity_report_folder && /usr/bin/python3 daily_auto_updater.py >> daily_updater.log 2>&1
+#   30 13 * * 1-5 cd /path/to/equity_report_folder && /usr/bin/python3 daily_auto_updater.py >> daily_updater.log 2>&1
+# 13:30 UTC = 19:00 IST (NSE data is published after 18:30 IST).
 # This runs at 18:00, Monday–Friday only (the "1-5"), and appends output to
 # daily_updater.log in the same folder so you can check it later.
 # ═══════════════════════════════════════════════════════════════════════

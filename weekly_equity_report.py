@@ -109,22 +109,32 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
     print("\n[2/3] Downloading Yahoo Finance historical data...")
     yf_cache = {}
     all_symbols = list(dict.fromkeys(INDEX_NAMES + SECTOR_NAMES))
+    
+    import concurrent.futures
 
-    for disp_name in all_symbols:
+    def fetch_symbol_data(disp_name):
         # Use long window for EMA indices
         if disp_name in LONG_WINDOW_INDICES:
             fetch_from = start_date - timedelta(days=LONG_HISTORY_DAYS)
         else:
             fetch_from = start_date - timedelta(days=SHORT_HISTORY_DAYS)
-
         symbol, df = fetch_with_fallback(disp_name, fetch_from, fetch_to)
+        return disp_name, symbol, df
 
-        if not df.empty:
-            yf_cache[disp_name] = df
-            print(f"  [OK] {disp_name:20s}: {len(df):4d} rows [{symbol}]")
-        else:
-            yf_cache[disp_name] = df  # Empty DataFrame
-            print(f"  [FAIL] {disp_name:20s}: No data")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_disp = {executor.submit(fetch_symbol_data, disp_name): disp_name for disp_name in all_symbols}
+        for future in concurrent.futures.as_completed(future_to_disp):
+            disp_name = future_to_disp[future]
+            try:
+                result_disp, symbol, df = future.result()
+                yf_cache[result_disp] = df
+                if not df.empty:
+                    print(f"  [OK] {result_disp:20s}: {len(df):4d} rows [{symbol}]")
+                else:
+                    print(f"  [FAIL] {result_disp:20s}: No data")
+            except Exception as exc:
+                print(f"  [ERROR] {disp_name:20s}: generated an exception: {exc}")
+                yf_cache[disp_name] = pd.DataFrame()
 
     # Find actual trading days (handle holidays)
     print("\n[3/3] Identifying actual trading days (handling holidays)...")
