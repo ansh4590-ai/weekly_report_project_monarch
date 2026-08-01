@@ -325,6 +325,21 @@ if st.session_state.fii_dii_daily is not None:
 # ═════════════════════════════════════════════════════════════════════
 
 if st.session_state.mkt_data is not None:
+    # ── Re-fetch reminder: today is inside the report week but before 6:30 PM IST ──
+    from data_sources import _is_after_nse_release_time
+    _end_date = st.session_state.end_date
+    if _end_date and date.today() <= _end_date and not _is_after_nse_release_time():
+        from datetime import datetime, timezone, timedelta
+        _IST = timezone(timedelta(hours=5, minutes=30))
+        _now_ist = datetime.now(_IST)
+        st.info(
+            f"⏰ **Reminder — Today's FII/DII is not yet available.**  \n"
+            f"NSE publishes official figures after **6:30 PM IST** "
+            f"(current IST time: **{_now_ist.strftime('%I:%M %p')}**).  \n"
+            "After 6:30 PM, click **🔄 Fetch Market Data** again to capture "
+            "today's data before generating the report.",
+        )
+
     st.header("Step 2 · Support & Resistance")
     st.caption(
         "Auto-calculated levels are pre-filled. "
