@@ -121,9 +121,18 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
         symbol, df = fetch_with_fallback(disp_name, fetch_from, fetch_to)
         return disp_name, symbol, df
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_disp = {executor.submit(fetch_symbol_data, disp_name): disp_name for disp_name in all_symbols}
-        for future in concurrent.futures.as_completed(future_to_disp):
+    from config import YF_POOL_TIMEOUT
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+    future_to_disp = {executor.submit(fetch_symbol_data, disp_name): disp_name for disp_name in all_symbols}
+    try:
+        # Backstop: even though each individual yfinance call now has its own
+        # hard timeout, this bounds the WHOLE step so one unforeseen stuck
+        # future (any cause) can never freeze report generation indefinitely.
+        done, not_done = concurrent.futures.wait(
+            future_to_disp, timeout=YF_POOL_TIMEOUT
+        )
+        for future in done:
             disp_name = future_to_disp[future]
             try:
                 result_disp, symbol, df = future.result()
@@ -135,6 +144,15 @@ def fetch_all_market_data(start_date, end_date) -> Dict[str, Any]:
             except Exception as exc:
                 print(f"  [ERROR] {disp_name:20s}: generated an exception: {exc}")
                 yf_cache[disp_name] = pd.DataFrame()
+        for future in not_done:
+            disp_name = future_to_disp[future]
+            print(f"  [TIMEOUT] {disp_name:20s}: still running after "
+                  f"{YF_POOL_TIMEOUT}s — treating as no data and moving on.")
+            yf_cache[disp_name] = pd.DataFrame()
+    finally:
+        # Don't block process/rerun exit waiting on threads that may still
+        # be stuck on a stalled socket in the background.
+        executor.shutdown(wait=False)
 
     # Find actual trading days (handle holidays)
     print("\n[3/3] Identifying actual trading days (handling holidays)...")

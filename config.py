@@ -154,6 +154,8 @@ SR_FACTORS = {
 NSE_TIMEOUT = 15
 YF_RETRY_COUNT = 3
 YF_RETRY_DELAY = 2  # seconds
+YF_CALL_TIMEOUT = 15   # hard per-call timeout for a single yfinance request
+YF_POOL_TIMEOUT = 90   # backstop: max time to wait for ALL parallel symbol fetches
 
 # Report structure validation
 EXPECTED_LEFT_CELL_PARAS_MIN = 10  # Minimum paragraphs in WGB section

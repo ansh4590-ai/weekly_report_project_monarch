@@ -1,112 +1,112 @@
 {
-  "week_start": "2026-07-19",
-  "week_end": "2026-07-26",
+  "week_start": "2026-07-24",
+  "week_end": "2026-07-31",
   "indices": [
     {
       "name": "NIFTY 50",
-      "close": 23767.45,
-      "pct": -2.33
+      "close": 24250.2,
+      "pct": 1.06
     },
     {
       "name": "BANK NIFTY",
-      "close": 56693.5,
-      "pct": -3.12
+      "close": 57205.9,
+      "pct": 0.14
     },
     {
       "name": "FINNIFTY",
-      "close": 25909.9,
-      "pct": -3.69
+      "close": 26287.1,
+      "pct": 0.38
     },
     {
       "name": "NIFTYNEXT50",
-      "close": 71766.0,
-      "pct": -0.09
+      "close": 72626.55,
+      "pct": 0.46
     },
     {
       "name": "MIDCAP SELECT",
-      "close": 14436.05,
-      "pct": -1.9
+      "close": 14683.05,
+      "pct": 0.39
     },
     {
       "name": "SENSEX",
-      "close": 76059.77,
-      "pct": -2.68
+      "close": 77654.6,
+      "pct": 1.17
     },
     {
       "name": "VIX",
-      "close": 14.03,
-      "pct": 6.69
+      "close": 12.01,
+      "pct": -9.63
     }
   ],
   "sectors": [
     {
       "name": "NIFTY AUTO",
-      "close": 27217.95,
-      "pct": 0.44
+      "close": 27825.95,
+      "pct": 1.82
     },
     {
       "name": "NIFTY FMCG",
-      "close": 49053.3,
-      "pct": 0.62
+      "close": 49690.65,
+      "pct": 0.93
     },
     {
       "name": "NIFTY IT",
-      "close": 28767.95,
-      "pct": -1.57
+      "close": 31123.1,
+      "pct": 9.01
     },
     {
       "name": "NIFTY METAL",
-      "close": 12401.55,
-      "pct": -0.28
+      "close": 12686.8,
+      "pct": 0.99
     },
     {
       "name": "NIFTYPHARM",
-      "close": 25548.15,
-      "pct": -0.38
+      "close": 26373.35,
+      "pct": 2.41
     },
     {
       "name": "NIFTY PSE",
-      "close": 9952.3,
-      "pct": 0.14
+      "close": 9875.35,
+      "pct": -1.46
     },
     {
       "name": "NIFTYPSUBANK",
-      "close": 8345.65,
-      "pct": -0.43
+      "close": 8317.15,
+      "pct": -0.77
     },
     {
       "name": "NIFTYPVTBA",
-      "close": 27277.55,
-      "pct": -4.32
+      "close": 27563.45,
+      "pct": 0.25
     },
     {
       "name": "NIFTY REALTY",
-      "close": 881.8,
-      "pct": -4.02
+      "close": 918.45,
+      "pct": 1.71
     },
     {
       "name": "NIFTY MEDIA",
-      "close": 1527.45,
-      "pct": 0.39
+      "close": 1580.85,
+      "pct": 5.66
     },
     {
       "name": "NIFTYINDDEFENCE",
-      "close": 9354.45,
-      "pct": 0.1
+      "close": 9221.3,
+      "pct": -2.13
     },
     {
       "name": "NIFTYMIDCA",
-      "close": 61622.35,
-      "pct": -1.29
+      "close": 62862.25,
+      "pct": 0.9
     },
     {
       "name": "NIFTYSMLC",
-      "close": 18874.95,
-      "pct": -2.18
+      "close": 19362.35,
+      "pct": 1.22
     }
   ],
   "global_mkts": {
-    "djia": -0.38,
-    "stoxx": 0.46
+    "djia": -1.2,
+    "stoxx": -0.3
   }
 }

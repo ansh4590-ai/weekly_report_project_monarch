@@ -16,7 +16,7 @@ import pandas as pd
 
 from config import (
     YF_SYMBOLS, NSE_NAME_MAP, NSELIB_MAP,
-    YF_RETRY_COUNT, YF_RETRY_DELAY, NSE_TIMEOUT
+    YF_RETRY_COUNT, YF_RETRY_DELAY, NSE_TIMEOUT, YF_CALL_TIMEOUT
 )
 from math_utils import round2
 
@@ -91,15 +91,50 @@ def fetch_yahoo_finance(symbol: str,
         print("  [ERROR] yfinance not installed. Run: pip install yfinance")
         return pd.DataFrame()
 
+    import concurrent.futures
+
+    def _yf_download():
+        with contextlib.redirect_stderr(io.StringIO()):
+            return yf.download(
+                symbol, start=start_date, end=end_date,
+                progress=False, auto_adjust=False, actions=False
+            )
+
+    def _yf_ticker_history():
+        return yf.Ticker(symbol).history(start=start_date, end=end_date, auto_adjust=False)
+
+    def _run_with_timeout(fn, label):
+        """
+        Run fn() in its own thread with a hard wall-clock timeout.
+
+        Yahoo Finance calls have no built-in timeout, so a network stall
+        (common on cloud hosts, where packets are silently dropped rather
+        than refused) would otherwise block this call — and everything
+        waiting on it — indefinitely. This mirrors the ThreadPoolExecutor +
+        future.result(timeout=...) pattern already used for nselib above.
+        Note: on timeout the underlying thread may keep running in the
+        background (Python threads can't be killed), but we stop waiting
+        on it and move on so the caller never hangs.
+        """
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = ex.submit(fn)
+        try:
+            return future.result(timeout=YF_CALL_TIMEOUT)
+        except concurrent.futures.TimeoutError:
+            print(f"  [WARN] {label} timed out after {YF_CALL_TIMEOUT}s — "
+                  f"network likely stalled. Moving on.")
+            return None
+        finally:
+            # wait=False is essential: the default wait=True would block here
+            # until the (possibly still-hung) worker thread finishes, which
+            # defeats the timeout above it entirely.
+            ex.shutdown(wait=False)
+
     for attempt in range(1, retries + 1):
         # Method 1: yf.download()
         try:
-            with contextlib.redirect_stderr(io.StringIO()):
-                raw = yf.download(
-                    symbol, start=start_date, end=end_date,
-                    progress=False, auto_adjust=False, actions=False
-                )
-            df = normalize_dataframe(raw)
+            raw = _run_with_timeout(_yf_download, f"yf.download({symbol})")
+            df = normalize_dataframe(raw) if raw is not None else pd.DataFrame()
             if not df.empty and "Close" in df.columns:
                 return df
         except Exception as e:
@@ -107,8 +142,8 @@ def fetch_yahoo_finance(symbol: str,
 
         # Method 2: yf.Ticker().history() as fallback
         try:
-            raw = yf.Ticker(symbol).history(start=start_date, end=end_date, auto_adjust=False)
-            df = normalize_dataframe(raw)
+            raw = _run_with_timeout(_yf_ticker_history, f"yf.Ticker({symbol}).history()")
+            df = normalize_dataframe(raw) if raw is not None else pd.DataFrame()
             if not df.empty and "Close" in df.columns:
                 return df
         except Exception as e:
@@ -384,6 +419,177 @@ def get_close_from_bhavcopy(target_friday: date, disp_name: str) -> Optional[flo
         day -= timedelta(days=1)
 
     return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NSE EQUITY BHAVCOPY — exact official closing prices for individual stocks
+# ══════════════════════════════════════════════════════════════════════════════
+
+def download_equity_bhavcopy(target_date: date) -> Optional[str]:
+    """
+    Download and locally cache the NSE equity bhavcopy CSV for `target_date`.
+
+    NSE publishes these at:
+      https://nsearchives.nseindia.com/content/historical/EQUITIES/{YYYY}/{MON}/
+        cm{DD}{MON}{YYYY}bhav.csv.zip
+
+    The CSV is extracted and saved to:
+      data/{YYYY}/{YYYYMMDD}/eq_bhavcopy.csv
+
+    If the file is already cached it is returned immediately without any
+    network request.  Returns None if download fails for any reason.
+
+    NOTE: NSE servers have known TLS/SSL configuration quirks.  This function
+    first tries with full SSL verification and falls back to verify=False if
+    needed (safe for a known exchange domain).
+    """
+    import io
+    import zipfile
+    import warnings
+    import requests
+    from urllib3.exceptions import InsecureRequestWarning
+    from config import DATA_DIR
+
+    # ── Derive paths ──────────────────────────────────────────────────────────
+    date_tag  = target_date.strftime("%Y%m%d")
+    year_str  = target_date.strftime("%Y")
+    month_str = target_date.strftime("%b").upper()   # e.g. "JUL"
+    day_str   = target_date.strftime("%d")           # e.g. "31"
+
+    out_dir  = os.path.join(DATA_DIR, year_str, date_tag)
+    out_path = os.path.join(out_dir, "eq_bhavcopy.csv")
+
+    if os.path.exists(out_path):
+        return out_path  # already cached — no download needed
+
+    # ── Candidate URLs ────────────────────────────────────────────────────────
+    fname = f"cm{day_str}{month_str}{year_str}bhav.csv.zip"
+    urls = [
+        f"https://nsearchives.nseindia.com/content/historical/EQUITIES/{year_str}/{month_str}/{fname}",
+        f"https://archives.nseindia.com/content/historical/EQUITIES/{year_str}/{month_str}/{fname}",
+        f"https://www1.nseindia.com/content/historical/EQUITIES/{year_str}/{month_str}/{fname}",
+    ]
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept":          "text/html,application/xhtml+xml,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer":         "https://www.nseindia.com/",
+    }
+
+    def _try_fetch(url: str, verify_ssl: bool) -> Optional[bytes]:
+        """Attempt a single URL; return raw zip bytes or None."""
+        try:
+            sess = requests.Session()
+            sess.headers.update(headers)
+            resp = sess.get(url, timeout=30, verify=verify_ssl)
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                return resp.content
+        except Exception:
+            pass
+        return None
+
+    def _extract_and_save(zip_bytes: bytes) -> Optional[str]:
+        """Extract the first CSV from a zip, save it, return path or None."""
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                csv_names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
+                if not csv_names:
+                    return None
+                csv_bytes = zf.read(csv_names[0])
+            os.makedirs(out_dir, exist_ok=True)
+            with open(out_path, "wb") as f:
+                f.write(csv_bytes)
+            return out_path
+        except Exception:
+            return None
+
+    for url in urls:
+        # First try with SSL verification enabled
+        raw = _try_fetch(url, verify_ssl=True)
+        if raw is None:
+            # NSE servers have known TLS quirks — retry without cert check
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", InsecureRequestWarning)
+                raw = _try_fetch(url, verify_ssl=False)
+
+        if raw:
+            saved = _extract_and_save(raw)
+            if saved:
+                print(f"  [EQ_BHAV] Downloaded equity bhavcopy for {target_date} → {saved}")
+                return saved
+            else:
+                print(f"  [WARN] EQ bhavcopy zip parse failed for {target_date}")
+
+    print(f"  [WARN] EQ bhavcopy unavailable for {target_date} — will use Yahoo Finance fallback")
+    return None
+
+
+
+
+def get_stock_close_from_equity_bhavcopy(
+    target_date: date,
+    nse_symbol: str,
+    max_lookback: int = 3,
+) -> Optional[float]:
+    """
+    Return the official NSE closing price for `nse_symbol` on `target_date`.
+
+    To bypass NSE IP restrictions on equity bhavcopy downloads, this reads
+    the 'UndrlygPric' (Underlying Price) column from the already-cached
+    derivatives bhavcopy (bhavcopy.csv).
+
+    Only rows with TckrSymb == nse_symbol are considered.
+
+    Args:
+        target_date: The date whose close is needed (typically a Friday).
+        nse_symbol:  NSE ticker, e.g. "BAJFINANCE", "M&M", "BAJAJ-AUTO".
+        max_lookback: How many calendar days to walk back for holidays.
+
+    Returns:
+        float close price, or None if not found in any attempted file.
+    """
+    from config import DATA_DIR
+
+    day = target_date
+    attempts = 0
+
+    while attempts <= max_lookback:
+        if day.weekday() >= 5:          # skip Saturday/Sunday
+            day -= timedelta(days=1)
+            continue
+
+        date_tag = day.strftime("%Y%m%d")
+        year_str = day.strftime("%Y")
+        csv_path = os.path.join(DATA_DIR, year_str, date_tag, "bhavcopy.csv")
+
+        if os.path.exists(csv_path):
+            try:
+                # Use pandas to read the derivatives bhavcopy
+                df_eq = pd.read_csv(csv_path, low_memory=False)
+                # Normalise column names (strip whitespace)
+                df_eq.columns = [c.strip() for c in df_eq.columns]
+                
+                mask = df_eq["TckrSymb"].astype(str).str.strip() == nse_symbol
+                sub = df_eq[mask]
+                
+                if not sub.empty:
+                    val = float(sub["UndrlygPric"].iloc[0])
+                    print(f"  [BHAVCOPY] {nse_symbol}: {val:.2f} (from {day})")
+                    return val
+            except Exception as exc:
+                print(f"  [WARN] Bhavcopy read error for {nse_symbol} on {day}: {exc}")
+
+        day -= timedelta(days=1)
+        attempts += 1
+
+    return None
+
+
 
 
 def get_ohlc_week(df: pd.DataFrame,
@@ -935,8 +1141,11 @@ def fetch_constituents(prev_friday: date,
     """
     Fetch top 2 gainers and losers for Nifty 50 and Bank Nifty constituents.
 
-    NOTE: Uses representative sample, not full constituent list.
-    For production, fetch live constituent list from NSE.
+    Data source priority for each stock:
+      1. NSE equity bhavcopy (official exchange closing price — exact match
+         to what NSE displays on its website and weekly reports).
+         Files are downloaded once and cached in data/{YYYY}/{YYYYMMDD}/eq_bhavcopy.csv.
+      2. Yahoo Finance (automatic fallback if bhavcopy is unavailable).
 
     Args:
         prev_friday: Previous week Friday
@@ -948,42 +1157,89 @@ def fetch_constituents(prev_friday: date,
         Each value is list of {"name": str, "pct": float}
     """
     from math_utils import calculate_weekly_pct
+    import concurrent.futures
 
     fetch_from = prev_friday - timedelta(days=7)
-    fetch_to = curr_friday + timedelta(days=1)
+    fetch_to   = curr_friday + timedelta(days=1)
 
-    def _stock_weekly_pct(symbol: str) -> Optional[float]:
-        """Calculate weekly % for a single stock."""
-        df = fetch_yahoo_finance(symbol, fetch_from, fetch_to)
+    # ── Step 1: Pre-download both equity bhavcopies concurrently ──────────────
+    # This ensures each file is fetched only once, even if many stocks need it.
+    print("  [INFO] Pre-fetching NSE equity bhavcopies for both Fridays …")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        futures = {
+            ex.submit(download_equity_bhavcopy, prev_friday): prev_friday,
+            ex.submit(download_equity_bhavcopy, curr_friday): curr_friday,
+        }
+        for fut in concurrent.futures.as_completed(futures):
+            d = futures[fut]
+            result_path = fut.result()
+            if result_path:
+                print(f"    [OK] Equity bhavcopy ready for {d}")
+            else:
+                print(f"    [WARN] Equity bhavcopy unavailable for {d} — Yahoo Finance fallback active")
+
+    # ── Step 2: Per-stock weekly % calculation ────────────────────────────────
+    def _stock_weekly_pct(name: str, yf_symbol: str):
+        """
+        Calculate weekly % change for a single stock.
+
+        Returns (pct, source) where source is 'bhavcopy' or 'yf'.
+        Returns (None, None) if no data found.
+
+        Priority:
+          1. NSE equity bhavcopy (exact official close)
+          2. Yahoo Finance (fallback)
+        """
+        # Derive the plain NSE ticker from the Yahoo Finance symbol (strip ".NS")
+        nse_sym = yf_symbol.replace(".NS", "").strip()
+
+        prev_close = get_stock_close_from_equity_bhavcopy(prev_friday, nse_sym)
+        curr_close = get_stock_close_from_equity_bhavcopy(curr_friday, nse_sym)
+
+        if prev_close is not None and curr_close is not None:
+            return calculate_weekly_pct(prev_close, curr_close), "bhavcopy"
+
+        # Fallback: Yahoo Finance (handles anything bhavcopy missed)
+        df = fetch_yahoo_finance(yf_symbol, fetch_from, fetch_to)
         if df.empty:
-            return None
+            return None, None
 
-        prev_close = get_close_on_date(df, prev_friday)
-        curr_close = get_close_on_date(df, curr_friday)
+        if prev_close is None:
+            prev_close = get_close_on_date(df, prev_friday)
+        if curr_close is None:
+            curr_close = get_close_on_date(df, curr_friday)
 
-        return calculate_weekly_pct(prev_close, curr_close)
+        if prev_close is None or curr_close is None:
+            return None, None
+
+        return calculate_weekly_pct(prev_close, curr_close), "yf"
 
     result = {}
 
     for group_name, tickers in [("nifty", NIFTY50_SAMPLE),
                                  ("banknifty", BANKNIFTY_SAMPLE)]:
         data = []
+        bhav_ok = 0
 
-        for name, symbol in tickers.items():
-            pct = _stock_weekly_pct(symbol)
+        for name, yf_symbol in tickers.items():
+            pct, src = _stock_weekly_pct(name, yf_symbol)
+            if src == "bhavcopy":
+                bhav_ok += 1
             if pct is not None:
                 data.append({"name": name, "pct": pct})
 
         # Sort by performance
         gainers = sorted(data, key=lambda x: x["pct"], reverse=True)[:2]
-        losers = sorted(data, key=lambda x: x["pct"])[:2]
+        losers  = sorted(data, key=lambda x: x["pct"])[:2]
 
         result[f"{group_name}_gainers"] = gainers
-        result[f"{group_name}_losers"] = losers
+        result[f"{group_name}_losers"]  = losers
 
-        print(f"  [INFO] {group_name.upper()}: {len(data)}/{len(tickers)} stocks fetched")
+        src_label = f"EQ bhavcopy: {bhav_ok}/{len(tickers)}, YF fallback: {len(tickers)-bhav_ok}/{len(tickers)}"
+        print(f"  [INFO] {group_name.upper()}: {len(data)}/{len(tickers)} stocks ({src_label})")
 
     return result
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════

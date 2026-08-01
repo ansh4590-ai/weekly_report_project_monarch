@@ -177,8 +177,7 @@ for _name in sorted(LONG_WINDOW_INDICES):
     _last_date = _combined.index.max().date()
     print(f"     [OK]   {_name}: {len(_df_out)} rows, up to {_last_date} -> {_out_csv}")
 
-print(f"\n[NEXT] Commit and push:")
-print(f"     git add data/market_snapshot.json data/long_history/")
+print(f"\n[DONE] Snapshot complete.  Now run:")
+print(f"     git add data/")
 print(f"     git commit -m \"snapshot: week ending {end_date.strftime('%d-%b-%Y')}\"")
 print(f"     git push")
-
