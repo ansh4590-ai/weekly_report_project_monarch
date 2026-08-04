@@ -1046,7 +1046,15 @@ def get_fii_dii_data(start_date: date, end_date: date) -> pd.DataFrame:
                 rows.append({"date": day, "fii": float("nan"),
                              "dii": float("nan"), "status": "too_early"})
             else:
-                scraped = _scrape_nse_fiidii_direct()
+                # Use fetch_fii_dii() (direct scrape -> nsepython fallback)
+                # rather than calling _scrape_nse_fiidii_direct() alone, so
+                # this path has the same resilience as get_fii_dii_for_date()
+                # (used by daily_auto_updater.py). Previously this called
+                # _scrape_nse_fiidii_direct() directly with no fallback, so a
+                # flaky/blocked direct scrape (e.g. on Streamlit Cloud, where
+                # NSE's site is often blocked) marked the day "missing" here
+                # even on days the auto-updater successfully logged.
+                scraped = fetch_fii_dii(day, day)
                 if scraped is not None and scraped.get("fii") is not None:
                     # Write to cache with file lock
                     _write_to_cache(path, iso, scraped["fii"], scraped["dii"])
