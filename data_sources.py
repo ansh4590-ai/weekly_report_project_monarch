@@ -812,7 +812,21 @@ def fetch_fii_dii(start_date: date, end_date: date) -> Dict[str, Any]:
     print("  [+] Direct scrape failed — falling back to nsepython...")
     try:
         import nsepython
-        df = nsepython.nse_fiidii()
+        import concurrent.futures
+
+        def _call_nsepython():
+            return nsepython.nse_fiidii()
+
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = ex.submit(_call_nsepython)
+        try:
+            df = future.result(timeout=10)
+        except concurrent.futures.TimeoutError:
+            print("  [WARN] nsepython timed out. Moving on.")
+            df = None
+        finally:
+            ex.shutdown(wait=False)
+
         if df is not None and not df.empty:
             fii_rows = df[df["category"].str.contains("FII|FPI", na=False, regex=True)]
             dii_rows = df[df["category"].str.contains("DII", na=False)]
