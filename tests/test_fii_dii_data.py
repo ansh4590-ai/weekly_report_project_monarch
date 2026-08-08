@@ -72,28 +72,33 @@ class TestFiiDiiData:
         assert df.iloc[0]["status"] == "missing"
         assert math.isnan(df.iloc[0]["fii"])
 
-    @patch("data_sources._scrape_nse_fiidii_direct")
+    @patch("data_sources._is_after_nse_release_time")
+    @patch("data_sources.fetch_fii_dii")
     @patch("data_sources._write_to_cache")
     @patch("data_sources.date")
     @patch("os.path.exists")
-    def test_live_capture(self, mock_exists, mock_date, mock_write, mock_scrape):
-        """Date is today, not cached -> scrapes live, writes to cache, returns 'live'."""
+    def test_live_capture(self, mock_exists, mock_date, mock_write, mock_fetch, mock_after_release):
+        """Date is today, after 6:30 PM IST, not cached -> scrapes live, writes to cache, returns 'live'."""
         mock_exists.return_value = False
-        today = date(2026, 7, 24) # Friday
+        today = date(2026, 7, 24)  # Friday
         mock_date.today.return_value = today
-        
-        mock_scrape.return_value = {"fii": 555, "dii": 777}
-        
+
+        # Simulate being after NSE's 6:30 PM release time
+        mock_after_release.return_value = True
+
+        # fetch_fii_dii is what get_fii_dii_data calls internally
+        mock_fetch.return_value = {"fii": 555, "dii": 777}
+
         start_date = date(2026, 7, 23)
         end_date = date(2026, 7, 24)
-        
+
         df = get_fii_dii_data(start_date, end_date)
-        
+
         assert len(df) == 1
         assert df.iloc[0]["date"] == today
         assert df.iloc[0]["status"] == "live"
         assert df.iloc[0]["fii"] == 555
         assert df.iloc[0]["dii"] == 777
-        
+
         # Ensure it attempted to save to cache
         mock_write.assert_called_once()
