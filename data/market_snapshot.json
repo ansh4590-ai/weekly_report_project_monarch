@@ -75,7 +75,7 @@
       "pct": -0.77
     },
     {
-      "name": "NIFTYPVTBA",
+      "name": "NIFTYPVTBANK",
       "close": 27563.45,
       "pct": 0.25
     },
@@ -95,12 +95,12 @@
       "pct": -2.13
     },
     {
-      "name": "NIFTYMIDCA",
+      "name": "NIFTYMIDCAP",
       "close": 62862.25,
       "pct": 0.9
     },
     {
-      "name": "NIFTYSMLC",
+      "name": "NIFTYSMLCAP",
       "close": 19362.35,
       "pct": 1.22
     }

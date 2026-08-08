@@ -20,9 +20,9 @@ INDEX_NAMES = [
 
 SECTOR_NAMES = [
     "NIFTY AUTO", "NIFTY FMCG", "NIFTY IT", "NIFTY METAL",
-    "NIFTYPHARM", "NIFTY PSE", "NIFTYPSUBANK", "NIFTYPVTBA",
+    "NIFTYPHARM", "NIFTY PSE", "NIFTYPSUBANK", "NIFTYPVTBANK",
     "NIFTY REALTY", "NIFTY MEDIA", "NIFTYINDDEFENCE",
-    "NIFTYMIDCA", "NIFTYSMLC"
+    "NIFTYMIDCAP", "NIFTYSMLCAP"
 ]
 
 EMA_NAMES = ["NIFTY", "BANK NIFTY", "FINNIFTY"]
@@ -47,12 +47,12 @@ NSE_NAME_MAP = {
     "NIFTY PHARMA":             "NIFTYPHARM",
     "NIFTY PSE":                "NIFTY PSE",
     "NIFTY PSU BANK":           "NIFTYPSUBANK",
-    "NIFTY PRIVATE BANK":       "NIFTYPVTBA",
+    "NIFTY PRIVATE BANK":       "NIFTYPVTBANK",
     "NIFTY REALTY":             "NIFTY REALTY",
     "NIFTY MEDIA":              "NIFTY MEDIA",
     "NIFTY INDIA DEFENCE":      "NIFTYINDDEFENCE",
-    "NIFTY MIDCAP 100":         "NIFTYMIDCA",
-    "NIFTY SMALLCAP 100":       "NIFTYSMLC",
+    "NIFTY MIDCAP 100":         "NIFTYMIDCAP",
+    "NIFTY SMALLCAP 100":       "NIFTYSMLCAP",
 }
 
 # Yahoo Finance ticker symbols (primary + fallbacks)
@@ -75,12 +75,12 @@ YF_SYMBOLS = {
     "NIFTYPHARM":        ["^CNXPHARMA"],
     "NIFTY PSE":         ["^CNXPSE"],
     "NIFTYPSUBANK":      ["^CNXPSUBANK"],
-    "NIFTYPVTBA":        [],  # Use nselib fallback (NIFTY PRIVATE BANK)
+    "NIFTYPVTBANK":      [],  # Use nselib fallback (NIFTY PRIVATE BANK)
     "NIFTY REALTY":      ["^CNXREALTY"],
     "NIFTY MEDIA":       ["^CNXMEDIA"],
-    "NIFTYINDDEFENCE": [],  # Use nselib fallback (NIFTY INDIA DEFENCE)
-    "NIFTYMIDCA":        [],  # Use nselib fallback (NIFTY MIDCAP 100)
-    "NIFTYSMLC":         [],  # Use nselib fallback (NIFTY SMALLCAP 100)
+    "NIFTYINDDEFENCE":   [],  # Use nselib fallback (NIFTY INDIA DEFENCE)
+    "NIFTYMIDCAP":       [],  # Use nselib fallback (NIFTY MIDCAP 100)
+    "NIFTYSMLCAP":       [],  # Use nselib fallback (NIFTY SMALLCAP 100)
 
     # EMA alias
     "NIFTY":             ["^NSEI"],
@@ -101,12 +101,12 @@ NSELIB_MAP = {
     "NIFTYPHARM": "NIFTY PHARMA",
     "NIFTY PSE": "NIFTY PSE",
     "NIFTYPSUBANK": "NIFTY PSU BANK",
-    "NIFTYPVTBA": "NIFTY PRIVATE BANK",
+    "NIFTYPVTBANK": "NIFTY PRIVATE BANK",
     "NIFTY REALTY": "NIFTY REALTY",
     "NIFTY MEDIA": "NIFTY MEDIA",
     "NIFTYINDDEFENCE": "NIFTY INDIA DEFENCE",
-    "NIFTYSMLC": "NIFTY SMALLCAP 100",
-    "NIFTYMIDCA": "NIFTY MIDCAP 100",
+    "NIFTYSMLCAP": "NIFTY SMALLCAP 100",
+    "NIFTYMIDCAP": "NIFTY MIDCAP 100",
 }
 
 # Bhavcopy index close map — maps display names to bhavcopy TckrSymb.

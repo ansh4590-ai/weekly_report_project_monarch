@@ -587,7 +587,7 @@ def build_narrative(mkt_data, fii_dii, constituents, global_mkts, start_date, en
 
     # Paragraph 3: Sectors + Broader market
     valid_sectors = [s for s in sectors if s.get("pct") is not None]
-    broader_names = {"NIFTYMIDCA", "NIFTYSMLC", "MIDCAP SELECT"}
+    broader_names = {"NIFTYMIDCAP", "NIFTYSMLCAP", "MIDCAP SELECT"}
     pure_sectors = [s for s in valid_sectors if s["name"] not in broader_names]
 
     if pure_sectors:
@@ -2307,6 +2307,29 @@ def main():
             end_date=end_date,
             resolved_closes=resolved_closes,
         )
+        # ── Sync BIAS column with candlestick pattern ───────────────────────────────────
+        # The sr_row["bias"] was previously derived from close vs EMA-200 only.
+        # Update it to match the actual weekly candlestick pattern detected by
+        # chart_generator so the table label is consistent with the narrative.
+        _sr_name_to_chart = {
+            "NIFTY":      "NIFTY",
+            "BANK NIFTY": "BANK NIFTY",
+            "FINNIFTY":   "FINNIFTY",
+        }
+        for _sr_row in mkt_data["sr"]:
+            _chart_key = _sr_name_to_chart.get(_sr_row["name"])
+            if _chart_key and _chart_key in tech_outlook:
+                _pattern = tech_outlook[_chart_key].get("pattern", "")
+                _ptype = chart_generator.classify_pattern_type(_pattern)
+                if _ptype == "bullish":
+                    _sr_row["bias"] = "BULLISH"
+                elif _ptype == "bearish":
+                    _sr_row["bias"] = "BEARISH"
+                else:
+                    # Indecisive (Doji, Spinning Top, etc.) — label as VOLATILE
+                    _sr_row["bias"] = "VOLATILE"
+                print(f"  [BIAS] {_sr_row['name']}: pattern={_pattern!r} → bias={_sr_row['bias']}")
+        # ────────────────────────────────────────────────────────────────────
         print("  [OK] Page 2 data generated successfully.")
     except Exception as e:
         print(f"  [ERROR] Page 2 generation failed: {e}")
