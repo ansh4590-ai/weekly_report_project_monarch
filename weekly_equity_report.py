@@ -835,6 +835,34 @@ def fill_docx_document(mkt_data, fii_dii, narrative, start_date, end_date,
     print("GENERATING DOCX REPORT")
     print("=" * 70)
 
+    # ── Sync BIAS column with candlestick pattern ──────────────────────────
+    # mkt_data["sr"] rows start with bias = close vs EMA-200 (BULLISH/BEARISH).
+    # That label must match the narrative on page 2 which describes the actual
+    # weekly candle.  We update here — inside fill_docx_document — so the sync
+    # runs regardless of whether the caller is main() (CLI) or streamlit_app.py.
+    if tech_outlook:
+        import chart_generator as _cg
+        _sr_chart_map = {
+            "NIFTY":      "NIFTY",
+            "BANK NIFTY": "BANK NIFTY",
+            "FINNIFTY":   "FINNIFTY",
+        }
+        for _sr_row in mkt_data["sr"]:
+            _chart_key = _sr_chart_map.get(_sr_row["name"])
+            if _chart_key and _chart_key in tech_outlook:
+                _pattern = tech_outlook[_chart_key].get("pattern", "")
+                _ptype = _cg.classify_pattern_type(_pattern)
+                if _ptype == "bullish":
+                    _sr_row["bias"] = "BULLISH"
+                elif _ptype == "bearish":
+                    _sr_row["bias"] = "BEARISH"
+                else:
+                    # Indecisive (Doji, Spinning Top, etc.) — use VOLATILE
+                    _sr_row["bias"] = "VOLATILE"
+                print(f"  [BIAS] {_sr_row['name']}: '{_pattern}' → {_sr_row['bias']}")
+    # ──────────────────────────────────────────────────────────────────────────
+
+
     # Step 1: Copy template and prepare header date string
     # NOTE: Header zip-patching is done AFTER doc.save() to avoid python-docx
     # overwriting the gradient header design when it saves the document.
@@ -2307,30 +2335,8 @@ def main():
             end_date=end_date,
             resolved_closes=resolved_closes,
         )
-        # ── Sync BIAS column with candlestick pattern ───────────────────────────────────
-        # The sr_row["bias"] was previously derived from close vs EMA-200 only.
-        # Update it to match the actual weekly candlestick pattern detected by
-        # chart_generator so the table label is consistent with the narrative.
-        _sr_name_to_chart = {
-            "NIFTY":      "NIFTY",
-            "BANK NIFTY": "BANK NIFTY",
-            "FINNIFTY":   "FINNIFTY",
-        }
-        for _sr_row in mkt_data["sr"]:
-            _chart_key = _sr_name_to_chart.get(_sr_row["name"])
-            if _chart_key and _chart_key in tech_outlook:
-                _pattern = tech_outlook[_chart_key].get("pattern", "")
-                _ptype = chart_generator.classify_pattern_type(_pattern)
-                if _ptype == "bullish":
-                    _sr_row["bias"] = "BULLISH"
-                elif _ptype == "bearish":
-                    _sr_row["bias"] = "BEARISH"
-                else:
-                    # Indecisive (Doji, Spinning Top, etc.) — label as VOLATILE
-                    _sr_row["bias"] = "VOLATILE"
-                print(f"  [BIAS] {_sr_row['name']}: pattern={_pattern!r} → bias={_sr_row['bias']}")
-        # ────────────────────────────────────────────────────────────────────
         print("  [OK] Page 2 data generated successfully.")
+
     except Exception as e:
         print(f"  [ERROR] Page 2 generation failed: {e}")
         import traceback
